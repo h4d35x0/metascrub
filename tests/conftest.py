@@ -255,3 +255,37 @@ def _close_exiftool():
     yield
     from metascrub import exif_io
     exif_io.close_session()
+
+
+# TK ROOT
+
+@pytest.fixture(scope="session")
+def tk_root():
+    """
+    One Tk interpreter for the whole session, shared by every test file.
+
+    Two separate problems make this session-scoped rather than per-test:
+
+    - Creating and destroying interpreters repeatedly intermittently fails on
+      Windows with "tk wasn't installed properly", and a fixture that skips on
+      that failure hides the GUI tests while the suite still reports green.
+    - A SECOND live interpreter in the same process fails outright, so any test
+      that builds its own tk.Tk() breaks every other GUI test in the run.
+
+    It is a TkinterDnD root when that package is installed, matching what
+    gui.main() builds, so the drag-and-drop path is genuinely exercised.
+    """
+    import tkinter as tk
+
+    from metascrub import gui as gui_module
+
+    try:
+        root = gui_module.TkinterDnD.Tk() if gui_module._HAVE_DND else tk.Tk()
+    except tk.TclError as exc:  # pragma: no cover - genuinely headless
+        pytest.skip(f"no display available: {exc}")
+    root.withdraw()
+    yield root
+    try:
+        root.destroy()
+    except tk.TclError:
+        pass

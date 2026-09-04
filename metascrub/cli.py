@@ -7,6 +7,7 @@ Subcommands:
     restore  put a file back from its .backup
     formats  list handled formats, their engine and their guarantee
     doctor   report which engines can actually run on this machine
+    selftest prove the whole chain works, including a real scrub round trip
     gui      open the desktop window
 """
 
@@ -255,6 +256,41 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def cmd_selftest(_args: argparse.Namespace) -> int:
+    """
+    Prove the whole chain works on this machine, not just that it imports.
+
+    Written for the launchers: the POSIX one cannot be exercised from the
+    Windows machine that wrote it, so this is the single command to run on
+    macOS or Linux that either proves it or names what is missing.
+    """
+    from . import selftest
+
+    print(_c("metascrub self test", BOLD))
+
+    style = {selftest.PASS: GREEN, selftest.FAIL: RED, selftest.SKIP: YELLOW}
+
+    def emit(outcome: str, name: str, detail: str) -> None:
+        print(f"  {_c(outcome, style[outcome])} {name:<12} {detail}")
+
+    results = selftest.run(emit=emit)
+    exif_io.close_session()
+
+    failed = sum(1 for outcome, _, _ in results if outcome == selftest.FAIL)
+    skipped = sum(1 for outcome, _, _ in results if outcome == selftest.SKIP)
+    print()
+    if failed:
+        print(_c(f"  {failed} check(s) FAILED", RED))
+    elif skipped:
+        # A skip is reported rather than folded into success: an absent ffmpeg
+        # is not a metascrub failure, but it is not evidence that audio and
+        # video work either.
+        print(_c(f"  all checks passed, {skipped} skipped", YELLOW))
+    else:
+        print(_c("  all checks passed", GREEN))
+    return selftest.exit_code(results)
+
+
 def cmd_gui(args: argparse.Namespace) -> int:
     """
     Launch the desktop window.
@@ -311,6 +347,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor = sub.add_parser("doctor", help="check engine availability")
     doctor.set_defaults(func=cmd_doctor)
+
+    selftest_parser = sub.add_parser(
+        "selftest", help="prove the whole chain works on this machine")
+    selftest_parser.set_defaults(func=cmd_selftest)
 
     gui = sub.add_parser("gui", help="open the desktop window")
     gui.add_argument("paths", nargs="*", help="files or directories to pre-queue")

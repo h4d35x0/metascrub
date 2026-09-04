@@ -132,6 +132,7 @@ python -m metascrub scrub ./album -r --report scrub-report.json
 python -m metascrub inspect photo.jpg          # show metadata, change nothing
 python -m metascrub restore photo.jpg          # undo from photo.jpg.backup
 python -m metascrub formats                    # what is handled, and how well
+python -m metascrub selftest                   # prove the whole chain works here
 python -m metascrub gui                        # desktop window
 ```
 
@@ -211,6 +212,72 @@ What the window will not do:
 Scrubbing runs on a worker thread, so a large directory does not freeze the
 window; results cross back over a queue and are applied on the main thread.
 Double-click any row for the full result JSON.
+
+---
+
+## Checking an installation
+
+`doctor` answers "can the engines start". `selftest` answers the larger
+question a launcher on a new machine actually raises: did it resolve the right
+project, are the dependencies really there, and does a real file go in dirty
+and come out clean.
+
+```bash
+metascrub selftest
+```
+
+```
+  PASS python       3.14.6
+  PASS package      1.0.0 from <volume>\Projects\...\metascrub
+  PASS exiftool     <volume>\Projects\.tools\exiftool\exiftool.EXE
+  PASS ffmpeg       ...
+  PASS tkinter      available; `metascrub gui` will run
+  PASS engines      all 4 ready
+  PASS round trip   a PDF went in carrying a value and came out without it
+```
+
+The round trip is the only check that proves anything: it builds a PDF carrying
+a known value, scrubs it, and searches the **output bytes** for that value. It
+never asks the tool whether it succeeded, because a self test that trusted the
+tool's own verdict would pass on exactly the bug this project exists to catch.
+
+`SKIP` is a real outcome and is never counted as success. A missing ffmpeg is
+not a metascrub failure, but it is not evidence that audio and video work
+either. A missing exiftool is a `FAIL`, not a `SKIP`, because nothing can be
+scrubbed or verified without it. Exit status is non-zero if any check failed.
+
+This is what to run on macOS or Linux the first time, since the `sh` launcher
+was written on Windows and cannot be exercised from there.
+
+---
+
+## Look
+
+The window uses ttk's `classic` theme with the Windows 95 system palette.
+That is a deliberate choice rather than nostalgia: `classic` already draws the
+beveled borders that look needs, so the styling works with the toolkit. Chasing
+a flat contemporary look in Tk means either fighting the widget set or adding a
+theme dependency, which would undo the reason Tkinter was chosen.
+
+Two rules constrain the styling, and `tests/test_theme.py` enforces both rather
+than trusting a comment:
+
+- **Every status colour clears a 3:1 contrast ratio** against the background it
+  is actually rendered on, which is the white list well, not the grey face.
+  Checking against the wrong background would pass a colour that is unreadable
+  in practice.
+- **Colour is never the only channel.** DANGER and OK measure a contrast ratio
+  of 1.07 against each other: they are nearly identical in luminance, so a
+  red/green deficiency makes a FAILED row indistinguishable from a SANITIZED
+  one. The Status column (`SANITIZED` vs `FAILED`) and the Verification column
+  (`verified clean` vs `STILL LEAKING`) carry the distinction as text, and a
+  test asserts no two statuses share a label.
+
+The checkbox indicators are deliberately left unstyled. Restyling them to match
+the palette set the selected colour to the same white as the unselected one, so
+a ticked box rendered identically to an empty one. That is not cosmetic:
+`Keep backup` decides whether the user's originals survive, and a toggle whose
+position cannot be read is worse than an ugly one.
 
 ---
 

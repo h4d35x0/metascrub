@@ -27,40 +27,8 @@ from metascrub.gui import ScrubberWindow, _verdict_text
 from metascrub.scrubber import STATUS_CLEAN, STATUS_ERROR, STATUS_SANITIZED
 
 
-@pytest.fixture(scope="session")
-def _tk_root():
-    """
-    One Tk interpreter for the whole session, handed out as a factory.
-
-    Per-test `tk.Tk()` roots were flaky: creating and destroying an interpreter
-    repeatedly in one process intermittently fails on Windows with "tk wasn't
-    installed properly", and the fixture then SKIPPED. A GUI test that silently
-    skips is worse than one that fails, because the suite still reports green
-    while the behaviour it guards goes unchecked. Measured 2026-09-04: two
-    consecutive full runs gave 181 passed / 1 skipped and 180 passed / 2
-    skipped, the difference being a Tk root that would not initialise.
-
-    One session-scoped root and a Toplevel per test removes the churn entirely.
-
-    The root is a TkinterDnD root when that package is installed, matching what
-    main() builds, so the drag-and-drop registration path is actually exercised
-    rather than skipped. On a plain root it degrades, and that degradation is
-    itself asserted below.
-    """
-    try:
-        root = gui_module.TkinterDnD.Tk() if gui_module._HAVE_DND else tk.Tk()
-    except tk.TclError as exc:  # pragma: no cover - genuinely headless
-        pytest.skip(f"no display available: {exc}")
-    root.withdraw()
-    yield lambda: root
-    try:
-        root.destroy()
-    except tk.TclError:
-        pass
-
-
 @pytest.fixture
-def window(monkeypatch, _tk_root):
+def window(monkeypatch, tk_root):
     """
     A withdrawn real window, destroyed afterwards, with modal dialogs captured
     instead of shown.
@@ -85,7 +53,7 @@ def window(monkeypatch, _tk_root):
     monkeypatch.setattr(gui_module.messagebox, "showerror", _capture("error"))
     monkeypatch.setattr(gui_module.messagebox, "askokcancel", _capture("confirm"))
 
-    window = tk.Toplevel(_tk_root())
+    window = tk.Toplevel(tk_root)
     window.withdraw()
     win = ScrubberWindow(window)
     win.dialogs = dialogs
@@ -326,19 +294,27 @@ def test_drag_and_drop_is_live_on_a_dnd_root(window):
     assert "Drop files here" in window.drop_hint.cget("text")
 
 
-def test_window_survives_a_plain_root_without_drag_and_drop():
+def test_window_survives_when_drop_registration_fails(tk_root, monkeypatch):
     """
     Importable tkinterdnd2 is not enough: its Tcl commands exist only on a
-    TkinterDnD root. On a plain root the window must still build, with drag and
-    drop simply off. Before this was handled, installing the dependency broke
-    every window built on a plain root.
+    TkinterDnD root. On a plain tk.Tk() root - which is what a test harness or
+    an application embedding this window would hand it - registration raises
+    `invalid command name "tkdnd::drop_target"`. Before this was handled,
+    installing the dependency broke every such window at construction.
+
+    The failure is injected at the registration call rather than by building a
+    plain root, because a second live Tk interpreter in one process fails
+    outright and would break every other GUI test in the run.
     """
-    plain = tk.Tk()
-    plain.withdraw()
-    try:
-        win = ScrubberWindow(tk.Toplevel(plain))
-        assert win.dnd_enabled is False
-        assert "Add Files" in win.drop_hint.cget("text")
-        assert "Drop files here" not in win.drop_hint.cget("text")
-    finally:
-        plain.destroy()
+    import tkinter.ttk as ttk_mod
+
+    def _refuse(self, *args, **kwargs):
+        raise tk.TclError('invalid command name "tkdnd::drop_target"')
+
+    monkeypatch.setattr(ttk_mod.Treeview, "drop_target_register", _refuse,
+                        raising=False)
+
+    win = ScrubberWindow(tk.Toplevel(tk_root))
+    assert win.dnd_enabled is False
+    assert "Add Files" in win.drop_hint.cget("text")
+    assert "Drop files here" not in win.drop_hint.cget("text")

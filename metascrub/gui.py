@@ -35,7 +35,7 @@ from typing import Dict, List, Optional
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from . import exif_io
+from . import exif_io, theme
 from .capabilities import CAPABILITIES, DEFERRED, Completeness, spec_for
 from .engines import engine_status
 from .scrubber import (
@@ -58,16 +58,18 @@ logger.addHandler(logging.NullHandler())
 
 APP_TITLE = "metascrub"
 
-# Row colours. Deliberately not a green/red binary: DEFERRED and PARTIAL are
-# their own states, and flattening them into "ok" or "bad" would tell the user
+# Row colours come from the theme, which owns the palette and its contrast
+# floor. Deliberately not a green/red binary: DEFERRED and SKIPPED are their
+# own states, and flattening them into "ok" or "bad" would tell the user
 # something the tool does not actually know.
-_PALETTE = {
-    STATUS_SANITIZED: "#1a7f37",
-    STATUS_CLEAN: "#57606a",
-    STATUS_UNSUPPORTED: "#57606a",
-    STATUS_DEFERRED: "#9a6700",
-    STATUS_ERROR: "#cf222e",
-}
+#
+# Colour is REINFORCEMENT here, never the only channel. Measured: DANGER and OK
+# differ by a contrast ratio of 1.07, so they are nearly identical in
+# luminance and anyone with a red/green deficiency cannot tell them apart. The
+# Status column ("SANITIZED" vs "FAILED") and the Verification column
+# ("verified clean" vs "STILL LEAKING") carry the distinction as text, and
+# tests/test_theme.py asserts that they do.
+_PALETTE = theme.status_colours()
 _LABEL = {
     STATUS_SANITIZED: "SANITIZED",
     STATUS_CLEAN: "CLEAN",
@@ -115,6 +117,15 @@ class ScrubberWindow:
         root.geometry("940x560")
         root.minsize(720, 420)
 
+        # Applied before any widget is built, so every widget picks it up. A
+        # theming failure must not cost the window, so it degrades to whatever
+        # Tk's default is rather than propagating.
+        try:
+            self.style = theme.apply(root)
+        except tk.TclError as exc:  # pragma: no cover - theme ships with Tk
+            logger.debug("could not apply theme: %s", exc)
+            self.style = ttk.Style(root)
+
         self._build_header()
         self._build_table()
         self._build_controls()
@@ -129,9 +140,9 @@ class ScrubberWindow:
         bar = ttk.Frame(self.root, padding=(12, 10, 12, 6))
         bar.pack(fill="x")
 
-        ttk.Label(bar, text=APP_TITLE, font=("Segoe UI", 15, "bold")).pack(side="left")
+        ttk.Label(bar, text=APP_TITLE, style="Title.TLabel").pack(side="left")
 
-        self.engine_label = ttk.Label(bar, text="checking engines...", foreground="#57606a")
+        self.engine_label = ttk.Label(bar, text="checking engines...", style="Hint.TLabel")
         self.engine_label.pack(side="right")
         ttk.Button(bar, text="Recheck", width=9,
                    command=self._refresh_engine_status).pack(side="right", padx=(0, 8))
@@ -142,7 +153,7 @@ class ScrubberWindow:
 
         # Text is set after the drop target is registered, because whether drag
         # and drop actually works is not knowable until then.
-        self.drop_hint = ttk.Label(wrap, text="", foreground="#57606a")
+        self.drop_hint = ttk.Label(wrap, text="", style="Hint.TLabel")
         self.drop_hint.pack(anchor="w", pady=(0, 4))
 
         columns = ("file", "status", "engine", "verdict", "detail")
@@ -164,7 +175,7 @@ class ScrubberWindow:
 
         for status, colour in _PALETTE.items():
             self.tree.tag_configure(status, foreground=colour)
-        self.tree.tag_configure("pending", foreground="#57606a")
+        self.tree.tag_configure("pending", foreground=theme.DISABLED)
 
         self.tree.bind("<Double-1>", self._show_detail)
         self.tree.bind("<Delete>", lambda _e: self._remove_selected())
@@ -235,7 +246,7 @@ class ScrubberWindow:
         bar.pack(fill="x")
         self.progress = ttk.Progressbar(bar, mode="determinate")
         self.progress.pack(side="left", fill="x", expand=True)
-        self.status_label = ttk.Label(bar, text="No files queued.", foreground="#57606a")
+        self.status_label = ttk.Label(bar, text="No files queued.", style="Status.TLabel")
         self.status_label.pack(side="right", padx=(10, 0))
 
     # ENGINE STATUS
@@ -255,7 +266,7 @@ class ScrubberWindow:
 
         if not self.readable:
             self.engine_label.configure(
-                text="exiftool missing - scrubbing disabled", foreground="#cf222e")
+                text="exiftool missing - scrubbing disabled", style="EngineBad.TLabel")
             self.scrub_button.configure(state="disabled")
             self._set_status(
                 "Cannot scrub: " + read_reason
@@ -268,10 +279,10 @@ class ScrubberWindow:
             self.engine_label.configure(
                 text=f"{len(statuses) - len(broken)}/{len(statuses)} engines ready: "
                      + ", ".join(sorted(broken)) + " unavailable",
-                foreground="#9a6700")
+                style="EngineWarn.TLabel")
         else:
             self.engine_label.configure(
-                text=f"all {len(statuses)} engines ready", foreground="#1a7f37")
+                text=f"all {len(statuses)} engines ready", style="EngineOK.TLabel")
 
     # FILE QUEUE
 
@@ -625,11 +636,6 @@ class ScrubberWindow:
 def main(argv: Optional[List[str]] = None) -> int:
     """Entry point. Any paths passed on the command line are pre-queued."""
     root = TkinterDnD.Tk() if _HAVE_DND else tk.Tk()
-    try:
-        ttk.Style().theme_use("vista")
-    except tk.TclError:
-        pass  # Non-Windows, or the theme is unavailable. Default theme is fine.
-
     window = ScrubberWindow(root)
     if argv:
         window._queue_paths(list(argv))
