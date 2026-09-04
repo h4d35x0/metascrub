@@ -538,6 +538,32 @@ class ScrubberWindow:
                 pass
             self._drain_id = None
 
+        # Release the Tk variables while the interpreter is still alive.
+        # tkinter.Variable.__del__ calls back into Tk, so a BooleanVar that
+        # survives until garbage collection is finalised after the loop is gone
+        # and raises "RuntimeError: main thread is not in main loop" from a
+        # deallocator, where it cannot be caught or acted on. Dropping the
+        # references here makes the collection deterministic and quiet.
+        #
+        # Same root cause as the drain timer above: anything holding a Tk handle
+        # past the window's life is a landmine at teardown.
+        self._options_at_close = {
+            "backup": self._read_var(self.backup_var, True),
+            "reset_times": self._read_var(self.reset_times_var, False),
+            "recursive": self._read_var(self.recursive_var, True),
+        }
+        self.backup_var = None
+        self.reset_times_var = None
+        self.recursive_var = None
+
+    @staticmethod
+    def _read_var(var, default):
+        """Read a Tk variable that may already be torn down."""
+        try:
+            return var.get() if var is not None else default
+        except (tk.TclError, AttributeError):
+            return default
+
     def _drain_queue(self) -> None:
         if self._closed:
             return

@@ -156,6 +156,60 @@ def _flatten(value) -> List[str]:
     return []
 
 
+def _ole2_without_directory_names(blob: bytes, path: str) -> bytes:
+    """
+    Blank the name field of every OLE2 directory entry, and nothing else.
+
+    A compound file stores each stream's NAME in its directory, as UTF-16LE.
+    Those names are required structure, exactly like the part names in an OOXML
+    package that `_PSEUDO_GROUPS` already excludes for the same reason. They
+    become a problem when a metadata VALUE happens to equal one of them.
+
+    Measured 2026-09-04 on a LibreOffice-produced .ppt: the CurrentUserAtom's
+    userName is the literal string "Current User", which is also the name of the
+    stream holding it. After the engine blanked the userName, the residual scan
+    still found "Current User" once, in UTF-16LE, in the directory entry that
+    names the stream. The file was clean and was reported as leaking.
+
+    Only the 64-byte name fields are blanked. Every payload byte, the FAT, and
+    the slack in every allocated sector are still searched, so residue left in
+    space the file is no longer using is still found. That matters: it is the
+    same class of leftover as the PDF incremental update this module exists to
+    catch, and dropping to a payload-only scan would give it up.
+    """
+    entry_size = 128
+    name_field = 64
+    try:
+        import olefile
+
+        out = bytearray(blob)
+        with olefile.OleFileIO(path) as ole:
+            sector = ole.first_dir_sector
+            seen = set()
+            while (sector not in (olefile.ENDOFCHAIN, olefile.FREESECT)
+                   and sector not in seen):
+                seen.add(sector)
+                start = (sector + 1) * ole.sectorsize
+                stop = min(start + ole.sectorsize, len(out))
+                for offset in range(start, stop, entry_size):
+                    out[offset:offset + name_field] = b"\x00" * min(
+                        name_field, len(out) - offset
+                    )
+                try:
+                    sector = ole.fat[sector]
+                except IndexError:
+                    break
+        return bytes(out)
+    except Exception:
+        # Returning the raw bytes is less precise and can produce a false
+        # RESIDUAL_FOUND. That is the correct direction to fail in: the
+        # alternative, letting the exception reach searchable_bytes, gets caught
+        # there and turns into an EMPTY haystack, which finds nothing and
+        # reports every value gone. A missing library or an unparseable
+        # directory must never be able to manufacture a clean verdict.
+        return blob
+
+
 def searchable_bytes(path: str, spec: FormatSpec) -> bytes:
     """
     Produce the byte stream a residual scan should search.
@@ -163,9 +217,13 @@ def searchable_bytes(path: str, spec: FormatSpec) -> bytes:
     For most containers this is the file itself. For a zip container it is not:
     OOXML metadata lives in deflated members, so scanning the raw .docx would
     find nothing and report a false clean. Members are inflated and
-    concatenated instead.
+    concatenated instead. For an OLE2 compound file it is the file with the
+    directory entry names blanked; see _ole2_without_directory_names.
     """
     try:
+        if spec.container is Container.OLE2:
+            with open(path, "rb") as fh:
+                return _ole2_without_directory_names(fh.read(), path)
         if spec.container is Container.ZIP:
             buf = io.BytesIO()
             with zipfile.ZipFile(path) as zf:

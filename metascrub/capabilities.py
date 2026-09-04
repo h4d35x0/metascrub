@@ -169,32 +169,57 @@ _OOXML: Dict[str, FormatSpec] = {
     for ext in (".docx", ".docm", ".xlsx", ".xlsm", ".pptx", ".pptm")
 }
 
-# TIER 4: legacy OLE2 compound files. DEFERRED, NOT SHIPPED.
+# TIER 4: legacy OLE2 compound files. Deferred until 2026-09-04, now shipped.
 #
 # .doc, .xls and .ppt keep their metadata in the \005SummaryInformation and
-# \005DocumentSummaryInformation property streams of an OLE2 compound file.
-# Removing them means rewriting a compound-file container, and olefile can only
-# overwrite a stream in place at its existing length.
+# \005DocumentSummaryInformation property streams of an OLE2 compound file, and
+# olefile can only overwrite a stream in place at its existing length. The
+# deferral was never about that constraint; it was about not being able to build
+# a fixture, and therefore not being able to test a rewrite path for documents a
+# user cannot regenerate.
 #
-# It is not shipped because it could not be TESTED. There is no way on this
-# machine to generate a genuine legacy OLE2 document to build a fixture from,
-# and an untested rewrite path for legacy Office documents can corrupt a file
-# that the user cannot regenerate. An unsupported format returns a clear
-# refusal; a half-working one destroys documents. The refusal is better.
+# The discharge condition was: a real fixture set under tests/fixtures/ole2/ and
+# tests/test_ole2.py passing against it. Both now exist. LibreOffice's MS Word
+# 97 / MS Excel 97 / MS PowerPoint 97 export filters produce genuine compound
+# files (magic d0cf11e0a1b11ae1) carrying seeded metadata, so the fixture is
+# generated at test time and the tests skip, never fail, where LibreOffice is
+# absent. tests/test_coverage_gate.py still enforces the condition.
 #
-# DISCHARGE CONDITION: these entries move into CAPABILITIES when, and only
-# when, a real .doc/.xls/.ppt fixture set exists under tests/fixtures/ole2/ and
-# tests/test_ole2.py passes against it.
-#
-# The condition is enforced, not just written down. tests/test_coverage_gate.py
-# fails the moment any of these extensions appears in CAPABILITIES while the
-# fixture directory or the test module is missing, so the deferral cannot be
-# discharged by quietly adding a row to the table.
-DEFERRED: Dict[str, str] = {
-    ".doc": "legacy OLE2; needs a real fixture before the rewrite path can ship",
-    ".xls": "legacy OLE2; needs a real fixture before the rewrite path can ship",
-    ".ppt": "legacy OLE2; needs a real fixture before the rewrite path can ship",
+# PARTIAL, not COMPLETE, and the note says exactly what survives. Measured with
+# exiftool 13.59 on a scrubbed .doc: the [MS-DOC] group still reports CreateDate,
+# ModifyDate, RevisionNumber, TotalEditTime and the document statistics, because
+# the DOP inside the WordDocument/Table streams keeps its own copy of them. The
+# give-away that it is a second carrier rather than a leftover is that the
+# surviving CreateDate is shifted by the local UTC offset: it is a local-time
+# field in the DOP, not the FILETIME in the property set.
+# The notes are per extension rather than shared, because the carriers differ.
+# A .doc row promising that Excel's user name was removed would be describing a
+# structure the file does not have, and a reader cannot tell an irrelevant
+# promise from a kept one.
+_OLE2_COMMON = ("summary and document-summary property sets and the CompObj "
+                "application user type are removed")
+_OLE2: Dict[str, FormatSpec] = {
+    ".doc": FormatSpec(
+        Engine.OLE2, Completeness.PARTIAL, Container.OLE2, True,
+        _OLE2_COMMON + "; the DOP copy of the timestamps, edit time, revision "
+        "count and document statistics survives in the WordDocument/Table "
+        "streams, as do SttbfAssoc and SttbSavedBy on documents written by "
+        "Microsoft Word"),
+    ".xls": FormatSpec(
+        Engine.OLE2, Completeness.PARTIAL, Container.OLE2, True,
+        _OLE2_COMMON + ", as is the WRITEACCESS user name in the Workbook "
+        "globals; other BIFF records this engine does not parse survive"),
+    ".ppt": FormatSpec(
+        Engine.OLE2, Completeness.PARTIAL, Container.OLE2, True,
+        _OLE2_COMMON + ", as is the last-editor name in the Current User "
+        "stream; per-edit user records in the PowerPoint Document stream "
+        "survive"),
 }
+
+# Nothing is deferred at the moment. The mechanism stays: a deferral is an
+# obligation with a due date, and tests/test_coverage_gate.py is what collects
+# it rather than anybody's memory.
+DEFERRED: Dict[str, str] = {}
 
 # TIER 5: audio and video. ffmpeg remux, not exiftool.
 _AV_NOTE = "container, per-stream and chapter metadata; remux without re-encoding"
@@ -227,7 +252,7 @@ _AV: Dict[str, FormatSpec] = {
 }
 
 CAPABILITIES: Dict[str, FormatSpec] = {}
-for _table in (_IMAGE, _PDF, _OOXML, _AV):
+for _table in (_IMAGE, _PDF, _OOXML, _OLE2, _AV):
     CAPABILITIES.update(_table)
 
 

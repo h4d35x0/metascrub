@@ -4,6 +4,96 @@ Corrections and the patterns that prevent repeating them. Newest first.
 
 ---
 
+## 2026-09-04 - The blocker was a missing fixture, and the fixture was one command away
+
+`.doc`, `.xls` and `.ppt` were deferred with the reason "there is no way on this
+machine to produce a genuine legacy Office document". That claim was written
+without being tested. LibreOffice was already installed, and
+
+```
+soffice --headless --convert-to doc --outdir <dir> seed.docx
+```
+
+produces a file starting `d0cf11e0a1b11ae1` carrying the seeded metadata.
+
+The second half of the deferral, that `olefile` cannot resize a stream, was true
+and was never the real obstacle. A property set does not have to be full to be
+valid: MS-OLEPS allows zero properties and readers reach the set through an
+offset table, so an empty property set plus zero padding fits inside any existing
+allocation. The constraint that looked fatal turned out to make the
+implementation SAFER than a rebuild, because nothing but stream payload ever
+changes.
+
+**Pattern:** a deferral's stated reason is a claim, and it ages. Re-test the
+blocker before re-deferring. And when a library constraint looks fatal, check
+whether the FORMAT allows a smaller valid answer before concluding you have to
+rewrite the container.
+
+---
+
+## 2026-09-04 - A tool that will not convert your file is not evidence your file is broken
+
+The OLE2 validity test ran `soffice --convert-to txt` on a scrubbed `.xls` and
+failed with "LibreOffice could not re-open the scrubbed .xls; the document is
+damaged". The document was not damaged. Calc has no plain-text export filter, so
+the same command fails identically on a pristine file straight out of the
+converter.
+
+The first instinct was to bisect the engine's three edits looking for the one
+that corrupted the workbook. The bisect is what showed the unscrubbed control
+failing too.
+
+**Pattern:** any check of the form "an external tool can still read this" needs
+the untouched input as a control in the same run. Without it, every
+environmental failure of the checker is reported as damage caused by the code
+under test, and the debugging goes straight to the wrong place.
+
+---
+
+## 2026-09-04 - LibreOffice serialises on its user profile, and calls it a timeout
+
+Adding three LibreOffice-built fixtures took the suite from 54 seconds to 615,
+and made two conversions return nothing at all. Not slow conversions: a second
+`soffice --convert-to` attaches to the instance the first one left resident and
+either does nothing or blocks until the 180 second timeout.
+
+Giving the test session its own profile fixed both at once:
+
+```
+soffice -env:UserInstallation=file:///<temp dir> --headless --convert-to ...
+```
+
+70 seconds, no lost conversions, and the run can no longer disturb a LibreOffice
+window the developer has open.
+
+**Pattern:** when a subprocess is a desktop application, assume it has global
+per-user state and give the test run its own. And read "returned nothing" as a
+possible contention symptom, not only as a failure of the input.
+
+---
+
+## 2026-09-04 - A residual scan can find a value in the container's own directory
+
+A scrubbed `.ppt` reported `residual_found` for the value `Current User`. The
+value really was in the bytes, once, in UTF-16LE. It was the OLE2 directory
+entry that NAMES the `Current User` stream. The engine had correctly blanked the
+userName field inside the stream; the collision was that LibreOffice writes a
+user name identical to the stream's own name.
+
+The fix had to be positional rather than textual. Deleting every occurrence of
+the string would also delete a real survivor sitting in a payload, which is a
+false CLEAN, the one direction this project must never fail in. The scan now
+blanks the 64-byte name field of each directory entry and nothing else, so
+payloads, the FAT and sector slack are all still searched, and a test plants the
+same string back into a payload and requires the scan to find it.
+
+**Pattern:** when excluding something from a residual scan, exclude a REGION,
+not a STRING. And write the test that proves the exclusion did not overcorrect
+in the same change, because that test is the only thing standing between a
+narrow exclusion and a silent blind spot.
+
+---
+
 ## 2026-09-04 - Do not let convenience silently make a structural decision
 
 **Correction from the maintainer:** "Why did you put it in .tools and not in
