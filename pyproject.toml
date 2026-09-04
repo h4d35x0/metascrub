@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "metascrub"
+version = "1.0.0"
+description = "Remove metadata from documents, images, audio and video, and verify the removal"
+requires-python = ">=3.9"
+dependencies = [
+    "pyexiftool>=0.5.6",
+    "Pillow>=10.0",
+    "pikepdf>=8.0",
+    "python-docx>=1.0",
+    "openpyxl>=3.1",
+    "python-pptx>=0.6",
+]
+
+[project.scripts]
+metascrub = "metascrub.cli:main"
+
+# GUI entry point. Listed under gui-scripts rather than scripts so that on
+# Windows it is launched by pythonw.exe and does not open a console window
+# behind the desktop window.
+[project.gui-scripts]
+metascrub-gui = "metascrub.gui:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "tkinterdnd2>=0.4"]
+
+# Drag and drop for the desktop window. An extra rather than a core dependency
+# because the CLI does not need it and a headless machine cannot use it: the
+# window degrades to its Add Files / Add Folder buttons when it is absent.
+# requirements.txt installs it, since that file is the desktop install path.
+gui = ["tkinterdnd2>=0.4"]
+
+[tool.setuptools.packages.find]
+include = ["metascrub*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

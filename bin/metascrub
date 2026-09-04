@@ -1,0 +1,53 @@
+#!/bin/sh
+# metascrub launcher for POSIX machines (macOS, Linux).
+#
+# Same contract as metascrub.cmd beside it: the real launcher lives with the
+# project so the project directory is self-contained, and everything is
+# resolved relative to this script, so the volume can mount anywhere. On macOS
+# that is /Volumes/DH_Drive, on Linux wherever it lands, and neither path is
+# written down here.
+#
+# `metascrub gui` needs tkinter, which is in the standard library but packaged
+# separately on some Linux distributions (apt install python3-tk). The CLI
+# subcommands do not need it.
+
+set -eu
+
+# Resolve this script's real directory, following symlinks, so a symlink into
+# ~/bin still finds the project. `readlink -f` is not on stock macOS.
+script=$0
+while [ -L "$script" ]; do
+    link=$(readlink "$script")
+    case $link in
+        /*) script=$link ;;
+        *)  script=$(dirname "$script")/$link ;;
+    esac
+done
+BIN=$(cd "$(dirname "$script")" && pwd)
+PROJECT=$(cd "$BIN/.." && pwd)
+
+if [ ! -f "$PROJECT/metascrub/__main__.py" ]; then
+    echo "metascrub: cannot find the package." >&2
+    echo "  looked in: $PROJECT/metascrub" >&2
+    echo "  This launcher expects to live in the project's bin/ directory." >&2
+    exit 1
+fi
+
+# The exiftool that travels on the volume is a Windows binary, so it is
+# deliberately NOT added to PATH here; these machines need a native one.
+if ! command -v exiftool >/dev/null 2>&1; then
+    echo "metascrub: exiftool is not on PATH." >&2
+    echo "  It is required for every format, not just images." >&2
+    echo "  macOS:  brew install exiftool" >&2
+    echo "  Debian: sudo apt install libimage-exiftool-perl" >&2
+    # Not fatal here: metascrub itself refuses to scrub and says the same
+    # thing, and subcommands like `formats` still work without it.
+fi
+
+PYTHONPATH="$PROJECT${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH
+
+if command -v python3 >/dev/null 2>&1; then
+    exec python3 -m metascrub "$@"
+fi
+exec python -m metascrub "$@"

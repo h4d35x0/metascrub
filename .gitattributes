@@ -1,0 +1,21 @@
+# Line endings are pinned here rather than left to config, because config is
+# per-machine and .gitattributes travels with the repo. Git for Windows ships
+# core.autocrlf=true in its SYSTEM config, which is invisible to
+# `git config --global --list` and silently rewrites LF to CRLF the next time
+# git touches a working tree. That has already corrupted 552 files in the
+# the parent project repo on this fleet, including a signing key.
+#
+# Everything is LF, including the .cmd launchers. That is deliberate and
+# verified: the batch launchers in bin\ were written with LF and run correctly
+# on Windows 11 as-is, so there is no reason to introduce a second line-ending
+# convention for three files.
+* text=auto eol=lf
+
+# Binaries, so git never tries to normalise them.
+*.png binary
+*.jpg binary
+*.pdf binary
+*.docx binary
+*.xlsx binary
+*.pptx binary
+*.exe binary

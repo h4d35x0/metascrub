@@ -1,0 +1,36 @@
+# Python build and cache artefacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# Test artefacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# metascrub's own output. A <file>.backup is the only remaining copy of an
+# unsanitized original, so it is exactly the kind of thing that must never be
+# committed: it carries the metadata the tool was asked to remove.
+*.backup
+scrub-report.json
+
+# Vendored third-party binaries, if anyone ever puts one here. The exiftool
+# this project uses on the portable volume deliberately lives outside the
+# project, in <volume>\Projects\.tools\exiftool\, to keep 39 MB of binary out
+# of the history.
+vendor/
+
+# Editor and OS noise
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store

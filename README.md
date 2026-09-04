@@ -1,0 +1,321 @@
+# Metadata-Scrubber (`metascrub`)
+
+Removes metadata from documents, images, audio and video, then **proves the
+removal actually happened** instead of assuming it did.
+
+Built on the `ExifSanitizer` from `the parent project` (`cli/sanitizer.py`), which
+handled eight image extensions through one engine. This extends that to four
+engines across 39 extensions, and replaces "no exception was raised" with
+measured verification.
+
+---
+
+## Why the verification exists
+
+Measured on 2026-09-04 with exiftool 13.29, on a one-page test PDF carrying
+`SECRETAUTHOR12345` in both its docinfo dictionary and its XMP packet:
+
+```
+exiftool -all= -overwrite_original test.pdf
+
+  file GREW              1519 -> 1846 bytes
+  exiftool -Author       prints nothing
+  grep SECRETAUTHOR      still there, twice
+  exiftool's own warning "PDF edits are reversible. Deleted tags may be recovered!"
+```
+
+exiftool edits a PDF by appending an incremental update. The old objects stay in
+the file. **A tool that re-read the file with exiftool would have reported that
+document clean.** It was not clean.
+
+The same document through this tool:
+
+```
+metascrub scrub test.pdf
+
+  file SHRANK            1519 -> 1025 bytes
+  grep SECRETAUTHOR      zero hits
+  verdict                verified_clean
+```
+
+So verification here never trusts the engine that performed the write. It reads
+the file's metadata **before** touching it, then searches the output bytes for
+those exact values. If a value the file used to carry is still findable, the
+file is reported as still leaking, whatever any tool claims.
+
+---
+
+## Install
+
+```bash
+pip install -e ".[gui]"          # installs the `metascrub` and `metascrub-gui` commands
+```
+
+That puts two launchers on PATH: `metascrub` (console) and `metascrub-gui`
+(window, no console, because it is declared under `gui-scripts`). On Windows pip
+writes them as real `.exe` shims into the Python **Scripts** directory; if pip
+warns that directory is not on PATH, add it, or keep using `python -m metascrub`
+from the project folder.
+
+An editable install (`-e`) points at this source tree rather than copying it, so
+the commands stop working if the drive holding the project is not mounted. Drop
+the `-e` for an install that does not depend on the project directory.
+
+Or, without installing anything:
+
+```bash
+pip install -r requirements.txt
+python -m metascrub ...          # run from the project directory
+```
+
+### Running it from the portable volume
+
+`pip install` cannot produce a launcher that travels. On Windows it writes a
+stub into the Python installation's Scripts directory with the absolute path of
+that interpreter baked in (`C:\Python314\python.exe`), so the launcher is tied
+to one machine even though the code is not.
+
+The real launchers live in the project's own `bin\` directory, so the project
+directory is self-contained: copy or clone it anywhere and it is runnable, with
+no install step and nothing to register.
+
+| Launcher | For |
+|---|---|
+| `bin\metascrub.cmd` | Windows, console |
+| `bin\metascrub-gui.cmd` | Windows, window with no console (`pythonw`) |
+| `bin\metascrub` | macOS and Linux (`sh`) |
+
+They resolve the project **relative to themselves**, so the volume can mount at
+any drive letter or any `/Volumes` path and they still find it. They set
+`PYTHONPATH` and run from source rather than from an install, so the code that
+runs is always the code sitting next to them.
+
+`<volume>\Projects\.tools\bin\` holds two-line **forwarders** to these, and
+nothing else. That directory is on PATH, which is the only reason a bare
+`metascrub` works from anywhere; keeping the logic out of it means the project
+does not depend on a directory outside itself, and that shared directory does
+not accumulate per-project launchers.
+
+The Windows launchers also prepend `<volume>\Projects\.tools\exiftool\` to
+PATH, falling back to a system exiftool if the volume has none. That copy is
+what makes the tool portable in practice: exiftool is required for **every**
+format, so without one metascrub correctly refuses to do anything, and a
+launcher that did not carry its own would be useless on a machine that happens
+not to have it installed. The bundled binary is Windows-only, so the `sh`
+launcher deliberately does not add it and tells you how to install a native one
+instead.
+
+Also needs two binaries on PATH:
+
+| Binary | Used for | Check | Install (Windows) |
+|---|---|---|---|
+| `exiftool` | **reading metadata for every format**, and writing images | `exiftool -ver` | `winget install OliverBetz.ExifTool` |
+| `ffmpeg` | audio and video | `ffmpeg -version` | `winget install Gyan.FFmpeg` |
+
+**`exiftool` is required for all formats, not just images.** Every engine reads
+its baseline metadata through exiftool even when it writes with pikepdf,
+zipfile or ffmpeg, because reading with a different tool than the one that
+wrote is what makes the verification meaningful. Without it, `scrub` refuses to
+run rather than reporting files it never examined.
+
+```bash
+python -m metascrub doctor      # reports which engines can actually run
+```
+
+---
+
+## Use
+
+```bash
+python -m metascrub scrub photo.jpg report.pdf clip.mp4
+python -m metascrub scrub ./album -r --report scrub-report.json
+python -m metascrub inspect photo.jpg          # show metadata, change nothing
+python -m metascrub restore photo.jpg          # undo from photo.jpg.backup
+python -m metascrub formats                    # what is handled, and how well
+python -m metascrub gui                        # desktop window
+```
+
+Useful flags: `--no-backup`, `--reset-times` (also normalise filesystem
+timestamps), `--remove-field TAG` / `--sanitize-field TAG` (exiftool formats
+only).
+
+Exit status is non-zero if any file failed **or** if any file still holds
+metadata after sanitizing, so it drops into a pipeline without parsing the
+report.
+
+```python
+from metascrub import MetadataScrubber
+
+with MetadataScrubber(backup=True) as scrubber:
+    result = scrubber.sanitize_file("report.pdf", remove_all=True)
+    assert result["verification"]["clean"]
+```
+
+---
+
+## Desktop window
+
+```bash
+metascrub-gui                        # after pip install; no console window
+metascrub gui ./album                # pre-queue a folder
+python -m metascrub gui              # without installing, from the project folder
+```
+
+Tkinter, from the standard library. Queue files with Add Files / Add Folder, or
+drag them onto the list.
+
+Drag and drop comes from `tkinterdnd2`, which `requirements.txt` installs. It is
+declared as the `gui` extra rather than a core dependency, because the CLI does
+not need it and a headless machine cannot use it:
+
+```bash
+pip install -r requirements.txt     # includes drag and drop
+pip install -e ".[gui]"             # same, via the extra
+pip install -e .                    # CLI only, window still works without DnD
+```
+
+Two things about it are worth knowing, both measured rather than assumed:
+
+- **Having it installed is not sufficient.** Its Tcl commands exist only when
+  the root window was created as `TkinterDnD.Tk()`, which `main()` does. A
+  window built on a plain `tk.Tk()` root, as a test harness or an embedding
+  application would, raises `invalid command name "tkdnd::drop_target"`. The
+  window catches that and turns drag and drop off rather than failing to open.
+- **A dropped path is a Tcl list, not a string.** A path containing spaces
+  arrives brace-wrapped (`{C:/two words/a.pdf} C:/b.pdf`), so splitting on
+  whitespace would turn one real path into several nonexistent ones and the
+  drop would silently add nothing.
+
+It is a view over the same `MetadataScrubber` the CLI drives, not a second
+implementation. That is deliberate: `gui/sanitizer.py` in the the parent project repo is a
+stale v1.0.0 fork of `cli/sanitizer.py`, and two copies growing format support
+independently is the failure this project already exists to undo.
+
+What the window will not do:
+
+- **It will not scrub when metadata cannot be read.** Engine status is checked
+  at startup, shown in the header, and re-checked before every run. With
+  exiftool missing the Scrub button is disabled and the status bar carries the
+  install command. A GUI that paints a green CLEAN row for a file nothing
+  examined is worse than no GUI, because the reassurance is what the user takes
+  away.
+- **It will not leave a verification cell blank.** Every file reads either
+  `verified clean`, `clean (partial format)`, `STILL LEAKING (n)`, or
+  `not verified`. A blank cell reads as "fine", and DEFERRED and SKIPPED files
+  are not fine, they are unexamined.
+- **It will not let a leak pass quietly.** A still-leaking file raises a dialog
+  rather than only colouring a row. A fully clean run raises nothing.
+- **It will not queue a `.backup`.** That file is the only remaining copy of the
+  original.
+
+Scrubbing runs on a worker thread, so a large directory does not freeze the
+window; results cross back over a queue and are applied on the main thread.
+Double-click any row for the full result JSON.
+
+---
+
+## Coverage
+
+| Family | Extensions | Engine | Guarantee |
+|---|---|---|---|
+| Images | jpg jpeg jpe png gif webp tiff tif heic heif avif jp2 psd | exiftool | complete |
+| Raw photo | dng cr2 nef arw orf rw2 | exiftool | **partial**, maker notes may retain private records |
+| PDF | pdf | pikepdf full rewrite | complete |
+| Office | docx docm xlsx xlsm pptx pptm | zip rebuild | complete |
+| Video | mp4 m4v mov mkv webm avi | ffmpeg remux | complete |
+| Audio | mp3 m4a flac wav ogg opus | ffmpeg remux | complete |
+
+`complete` and `partial` are separate states carried in every result, because
+"we support this format" and "we can fully clean this format" are different
+promises. A partial result always says so.
+
+### Not handled, and why
+
+- **`.doc`, `.xls`, `.ppt`** (legacy OLE2) are **deferred, not shipped**. Their
+  metadata lives in `\005SummaryInformation` streams, and `olefile` can only
+  overwrite a stream in place at its existing length. It is not shipped because
+  it could not be tested: there is no way on this machine to produce a genuine
+  legacy Office document to build a fixture from, and an untested rewrite path
+  for legacy documents can corrupt files a user cannot regenerate. A clear
+  refusal beats a half-working rewrite.
+  **Discharge condition:** these move into the capability table only when
+  `tests/fixtures/ole2/` exists and `tests/test_ole2.py` passes against it.
+  `tests/test_coverage_gate.py` fails if anyone ships them without that, so the
+  deferral cannot be discharged by forgetting it.
+- **`.bmp`** is absent because exiftool 13.29 answers *"Writing of BMP files is
+  not yet supported"*. Listing a format the tool cannot write would be a promise
+  it cannot keep.
+- **Tracked changes and comments** in Office documents are detected and
+  **reported, not removed**. They are user-visible content, not metadata, and
+  deleting them silently would destroy work.
+
+---
+
+## Notes worth knowing
+
+- **TIFF cannot have its IFD0 dropped.** exiftool answers *"Can't delete IFD0
+  from TIFF"* and leaves `Artist` and `Copyright` in place, because in a TIFF
+  the EXIF IFD *is* the image structure. The exiftool engine follows `-all=`
+  with a targeted sweep of identity tags, which does remove them.
+- **That sweep is an allowlist, deliberately.** `exiftool -ImageWidth=` is
+  accepted on a TIFF and produces a file Pillow can no longer open, so sweeping
+  every surviving tag would corrupt images while reporting success.
+- **A failed metadata read is an error, never a clean file.** These are two
+  states that must never share one representation, and they used to: the read
+  path caught every exception and returned an empty dict, so "we could not read
+  it" and "it carries nothing" were the same value. The scrubber read that value
+  as CLEAN and returned before any engine ran. Measured 2026-09-04 on a machine
+  without exiftool on PATH: a PDF carrying its author string twice reported
+  `CLEAN`, `verified clean 1`, exit 0, and still carried it twice afterwards. It
+  affected every format, because all four engines read their baseline through
+  exiftool. `ExifSession.read()` now returns a `MetadataRead` carrying `ok`, an
+  unreadable baseline fails the file, and `tests/test_failopen.py` asserts over
+  the whole format cross-product that nothing reports clean when metadata cannot
+  be read.
+- **Existing backups are never overwritten.** The original the parent project code wrote
+  `<file>.backup` unconditionally, so sanitizing the same file twice replaced
+  the pristine backup with the already-sanitized copy and destroyed the only
+  remaining original.
+- **`-overwrite_original` is always passed.** Without it exiftool leaves a
+  `_original` sidecar, which is an unsanitized duplicate of the input sitting
+  next to the output.
+- **Non-ASCII paths work.** They need both `encoding="utf-8"` and
+  `-charset filename=UTF8`; without them exiftool reports "No matching files",
+  which looks like a skipped file rather than an encoding problem.
+- Container rewrites are atomic (`os.replace` onto a temp file in the same
+  directory), so an interrupted run cannot leave a truncated document.
+
+---
+
+## Tests
+
+```bash
+python -m pytest tests/ -q
+```
+
+The suite asserts over a cross-product of (format x remove_all x backup) rather
+than one file per format, and every fixture embeds a unique sentinel that the
+tests search for **in the output bytes**, never by asking an engine whether it
+succeeded. `tests/test_boundaries.py` covers zero-byte files, files with no
+metadata, extensions that lie about their container, read-only files, non-ASCII
+paths, backup preservation and restore round-trips.
+
+`tests/test_failopen.py` covers the case where metadata cannot be read at all,
+and `tests/test_gui.py` drives the real widget tree and the real worker thread,
+including a scrub asserted against the output bytes rather than against the
+window's own verdict.
+
+---
+
+## Relationship to the parent project
+
+The public API is intentionally shaped like the the parent project `ExifSanitizer`
+(`sanitize_file`, `sanitize_directory`, `restore_backup`,
+`generate_sanitization_report`, context manager, `backup` flag), and
+`ExifSanitizer` is exported here as an alias. the parent project can adopt this engine
+without rewriting its call sites.
+
+That adoption is the intended end state. Two copies of this logic growing format
+support independently is exactly the failure already visible in the the parent project repo,
+where `gui/sanitizer.py` is a stale v1.0.0 fork of `cli/sanitizer.py`. The
+adoption is tracked outside this repository.
