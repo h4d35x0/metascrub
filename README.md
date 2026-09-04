@@ -48,6 +48,27 @@ the file's metadata **before** touching it, then searches the output bytes for
 those exact values. If a value the file used to carry is still findable, the
 file is reported as still leaking, whatever any tool claims.
 
+### What that proves, and what it does not
+
+The values being searched for come from exiftool's view of the file before it
+was touched. So the scan proves that **nothing exiftool could see has
+survived**. That is not the same as proving nothing survived.
+
+A carrier exiftool does not parse never becomes something to search for, so its
+survival cannot be detected either. Measured 2026-09-04 on a `.docx`: the author
+in `docProps` becomes a search value, while a string written into
+`customXml/item1.xml` does not, even though it is still in the file afterwards.
+
+This is why formats get engine-specific handling rather than one generic
+exiftool pass. The engines deliberately remove carriers the runtime scan cannot
+see: the OOXML engine drops `w:rsid` revision identifiers and the thumbnail, and
+the PDF engine rewrites the whole object graph. The test suite catches those
+because it embeds its own sentinels and knows where it put them, independently
+of what any tool reports.
+
+The runtime verdict is bounded by what exiftool can read, and `verified_clean`
+should be read as exactly that claim and no wider.
+
 ---
 
 ## Install
