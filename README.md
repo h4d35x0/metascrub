@@ -5,7 +5,7 @@ removal actually happened** instead of assuming it did.
 
 Built on the `ExifSanitizer` from `the parent project` (`cli/sanitizer.py`), which
 handled eight image extensions through one engine. This extends that to four
-engines across 39 extensions, and replaces "no exception was raised" with
+engines across 38 extensions, and replaces "no exception was raised" with
 measured verification.
 
 ---
@@ -38,6 +38,11 @@ metascrub scrub test.pdf
   verdict                verified_clean
 ```
 
+Re-confirmed on exiftool 13.59, which behaves identically: the same
+`-all= -overwrite_original` grew the file by the same 327 bytes, left both
+copies of the string in place, printed nothing for `-Author`, and emitted the
+same warning. This is not a quirk of one release.
+
 So verification here never trusts the engine that performed the write. It reads
 the file's metadata **before** touching it, then searches the output bytes for
 those exact values. If a value the file used to carry is still findable, the
@@ -67,6 +72,42 @@ Or, without installing anything:
 pip install -r requirements.txt
 python -m metascrub ...          # run from the project directory
 ```
+
+### On a fresh machine, from a clone
+
+The repo is self-contained. Cloned anywhere, `bin\` still works, because the
+launchers resolve the project relative to themselves rather than to any fixed
+path:
+
+```bash
+git clone <remote> metascrub
+cd metascrub
+./bin/metascrub selftest              # macOS, Linux
+bin\metascrub.cmd selftest            # Windows
+```
+
+`selftest` is the right first command: it reports what is missing rather than
+failing on the first file. Nothing needs installing for the launchers to work,
+but two binaries must be on PATH, and **exiftool is required for every format,
+not just images**:
+
+| | exiftool | ffmpeg (audio and video only) |
+|---|---|---|
+| Windows | `winget install OliverBetz.ExifTool` | `winget install Gyan.FFmpeg` |
+| macOS | `brew install exiftool` | `brew install ffmpeg` |
+| Debian, Ubuntu | `sudo apt install libimage-exiftool-perl` | `sudo apt install ffmpeg` |
+
+On Linux, `metascrub gui` also needs `sudo apt install python3-tk`. Tkinter is
+in the standard library but several distributions package it separately. The
+CLI does not need it, and `selftest` reports its absence as SKIP rather than a
+failure.
+
+A clone off the portable volume has no `.tools\exiftool\` beside it, so the
+Windows launchers fall back to a system exiftool. That is checked and verified:
+a clone at an unrelated path passes `selftest` using the system copy, and each
+launcher runs the source sitting next to it rather than any other copy that may
+be pip-installed on the machine. The `package` line of `selftest` prints which
+directory it actually imported, so this is never a guess.
 
 ### Running it from the portable volume
 
@@ -368,9 +409,16 @@ metadata, extensions that lie about their container, read-only files, non-ASCII
 paths, backup preservation and restore round-trips.
 
 `tests/test_failopen.py` covers the case where metadata cannot be read at all,
-and `tests/test_gui.py` drives the real widget tree and the real worker thread,
+including the detached-process import path where there is no stdout to fail on.
+`tests/test_gui.py` drives the real widget tree and the real worker thread,
 including a scrub asserted against the output bytes rather than against the
-window's own verdict.
+window's own verdict. `tests/test_theme.py` enforces the contrast floor and the
+rule that colour is never the only channel carrying a verdict, and
+`tests/test_selftest.py` checks that the self test can actually fail.
+
+207 passing and 1 skipped as of 2026-09-04. The skip is deliberate:
+`tests/test_coverage_gate.py` refuses to enforce OLE2 while it is deferred, and
+fails if anyone ships it without fixtures.
 
 ---
 
