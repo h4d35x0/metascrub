@@ -8,6 +8,7 @@ from ..capabilities import Engine
 from .av_engine import AvEngine
 from .base import BaseEngine, EngineError, EngineUnavailable
 from .exiftool_engine import ExifToolEngine
+from .ole2_engine import Ole2Engine
 from .ooxml_engine import OoxmlEngine
 from .pdf_engine import PdfEngine
 
@@ -15,6 +16,7 @@ _REGISTRY: Dict[Engine, BaseEngine] = {
     Engine.EXIFTOOL: ExifToolEngine(),
     Engine.PDF: PdfEngine(),
     Engine.OOXML: OoxmlEngine(),
+    Engine.OLE2: Ole2Engine(),
     Engine.AV: AvEngine(),
 }
 

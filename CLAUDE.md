@@ -34,9 +34,10 @@ embeds a unique sentinel and the assertion searches the bytes for it.
 
 ## Traps already paid for. Do not re-learn these.
 
-1. **exiftool is required for EVERY format, not just images.** All four engines
+1. **exiftool is required for EVERY format, not just images.** All five engines
    read their baseline through it, even though pdf writes with pikepdf, ooxml
-   with zipfile and av with ffmpeg. Without it the tool must refuse, and does.
+   with zipfile, ole2 with olefile and av with ffmpeg. Without it the tool must
+   refuse, and does.
 
 2. **"Could not read" and "carries nothing" must never share a representation.**
    `ExifSession.read()` used to swallow every exception into an empty dict, so
@@ -74,7 +75,7 @@ embeds a unique sentinel and the assertion searches the bytes for it.
 | `metascrub/verify.py` | the residual byte scan; the heart of the project |
 | `metascrub/exif_io.py` | shared exiftool session, `MetadataRead` |
 | `metascrub/capabilities.py` | format table: engine + completeness per extension |
-| `metascrub/engines/` | exiftool, pdf (pikepdf), ooxml (zip), av (ffmpeg) |
+| `metascrub/engines/` | exiftool, pdf (pikepdf), ooxml (zip), ole2 (olefile), av (ffmpeg) |
 | `metascrub/gui.py` | Tkinter window; a view over MetadataScrubber, never a fork |
 | `metascrub/theme.py` | Windows 95 palette and its contrast floor |
 | `metascrub/selftest.py` | end-to-end proof for a new machine |
@@ -88,14 +89,15 @@ embeds a unique sentinel and the assertion searches the bytes for it.
 ## Commands
 
 ```bash
-python -m pytest tests/ -q          # 207 passed, 1 skipped as of 2026-09-04
+python -m pytest tests/ -q          # 267 passed, 4 skipped as of 2026-09-04
 python -m metascrub selftest        # end-to-end, including a real round trip
 python -m metascrub doctor          # can the engines start
 python -m metascrub gui
 ```
 
-The 1 skip is intentional: `test_coverage_gate.py` refuses to enforce OLE2
-while it is deferred.
+The 4 skips are intentional: .doc, .xls and .ppt are PARTIAL so they skip the
+COMPLETE-formats check, and one test of the missing-LibreOffice path skips where
+LibreOffice is present.
 
 **exiftool on this machine** lives at
 `C:\Users\user\AppData\Local\Programs\ExifTool\` and may not be on
@@ -108,8 +110,9 @@ the PATH of a shell started before it was installed.
 - **`Completeness.PARTIAL` is a real state and must stay separate from
   COMPLETE.** "We support this format" and "we can fully clean it" are
   different promises. Raw formats are PARTIAL because maker notes survive.
-- **A deferral must be enforced by a test, not by memory.** OLE2 is deferred and
-  `tests/test_coverage_gate.py` fails if anyone ships it without fixtures.
+- **A deferral must be enforced by a test, not by memory.** OLE2 was deferred
+  and `tests/test_coverage_gate.py` collected it on 2026-09-04. DEFERRED is
+  empty now; the mechanism stays for the next one.
 - **Never overwrite an existing `<file>.backup`.** It is the only remaining copy
   of the pre-sanitize original.
 - **The GUI is a view over `MetadataScrubber`, never a second implementation.**
@@ -124,5 +127,6 @@ the PATH of a shell started before it was installed.
 ## Open work
 
 See `tasks/todo.md`. The short version: no git remote yet, the parent project adoption is the
-stated end state, the `sh` launcher has never run on real macOS or Linux, and
-OLE2 waits on fixtures.
+stated end state, and the `sh` launcher has never run on real macOS or Linux.
+OLE2 shipped on 2026-09-04 as PARTIAL; the Word SttbfAssoc and SttbSavedBy
+carriers are still untouched because no fixture here writes them.

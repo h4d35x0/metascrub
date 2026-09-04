@@ -18,9 +18,11 @@ passes by having nothing to remove.
 
 from __future__ import annotations
 
+import atexit
 import os
 import shutil
 import subprocess
+import tempfile
 import zipfile
 
 import pytest
@@ -75,6 +77,32 @@ def contains_anywhere(path: str, needle: str) -> bool:
 
 HAVE_FFMPEG = shutil.which("ffmpeg") is not None
 HAVE_EXIFTOOL = shutil.which("exiftool") is not None
+
+
+def _load_ole2_builder():
+    """
+    Load tests/fixtures/ole2/build_ole2.py by path.
+
+    By path rather than by package import because tests/fixtures/ has no
+    __init__.py and adding one would put fixture data on the import path, where
+    a module named like a stdlib module would shadow it. That is not
+    hypothetical: a scratch file named inspect.py shadowed the stdlib `inspect`
+    during this work and broke olefile's import with a circular-import error
+    that named neither file.
+    """
+    import importlib.util
+
+    location = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "fixtures", "ole2", "build_ole2.py"
+    )
+    spec = importlib.util.spec_from_file_location("metascrub_ole2_fixtures", location)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+build_ole2 = _load_ole2_builder()
+HAVE_LIBREOFFICE = build_ole2.find_soffice() is not None
 
 
 def _exiftool_write(path: str, **tags: str) -> None:
@@ -212,6 +240,51 @@ def make_audio(tmp_path, ext: str = ".mp3"):
     return path, value
 
 
+# LEGACY OLE2
+#
+# Cached for the whole session and copied per test. Every other builder here is
+# cheap enough to rerun, but this one starts LibreOffice, which measured about
+# four seconds per conversion on a warm profile. ALL_KINDS drives roughly ten
+# tests per format, so rebuilding per test would have added minutes to the suite
+# for three formats whose bytes are identical every time.
+
+_OLE2_CACHE = {}
+_OLE2_CACHE_DIR = None
+
+
+def _ole2_cache_dir():
+    global _OLE2_CACHE_DIR
+    if _OLE2_CACHE_DIR is None:
+        _OLE2_CACHE_DIR = tempfile.mkdtemp(prefix="metascrub-ole2-")
+        atexit.register(shutil.rmtree, _OLE2_CACHE_DIR, True)
+    return _OLE2_CACHE_DIR
+
+
+def make_ole2(tmp_path, ext: str):
+    """
+    Return (path, sentinel) for a legacy .doc/.xls/.ppt built by LibreOffice.
+
+    Skips rather than fails when LibreOffice is absent or its conversion did not
+    produce a compound file. A machine without the converter says nothing about
+    whether the engine works, and a failure here would claim it did.
+    """
+    if not HAVE_LIBREOFFICE:
+        pytest.skip("LibreOffice not available; cannot build a legacy OLE2 fixture")
+    value = sentinel(ext.lstrip("."))
+    if ext not in _OLE2_CACHE:
+        built = build_ole2.build_ole2(ext, _ole2_cache_dir(), value)
+        if built is None:
+            pytest.skip(f"LibreOffice did not produce a compound file for {ext}")
+        _OLE2_CACHE[ext] = built
+    path = str(tmp_path / f"fixture{ext}")
+    shutil.copyfile(_OLE2_CACHE[ext], path)
+    # Asserted, not assumed. A conversion that dropped the properties would
+    # otherwise give every OLE2 test a file with nothing to remove, and they
+    # would all pass.
+    assert raw_contains(path, value), f"{ext} fixture did not store the sentinel"
+    return path, value
+
+
 # BUILDER REGISTRY, used to drive the cross-product tests
 
 IMAGE_FORMATS = [(".jpg", "JPEG"), (".png", "PNG"), (".gif", "GIF"),
@@ -231,6 +304,8 @@ def build(kind: str, tmp_path):
         return make_xlsx(tmp_path)
     if kind == ".pptx":
         return make_pptx(tmp_path)
+    if kind in (".doc", ".xls", ".ppt"):
+        return make_ole2(tmp_path, kind)
     if kind in (".mp4", ".mkv", ".mov"):
         if not HAVE_FFMPEG:
             pytest.skip("ffmpeg not available")
@@ -245,7 +320,8 @@ def build(kind: str, tmp_path):
 # Every format the cross-product tests must cover. A format handled by the
 # capability table but absent here is caught by test_coverage.py.
 ALL_KINDS = [ext for ext, _ in IMAGE_FORMATS] + [
-    ".pdf", ".docx", ".xlsx", ".pptx", ".mp4", ".mkv", ".mp3", ".flac",
+    ".pdf", ".docx", ".xlsx", ".pptx", ".doc", ".xls", ".ppt",
+    ".mp4", ".mkv", ".mp3", ".flac",
 ]
 
 

@@ -4,8 +4,8 @@ Removes metadata from documents, images, audio and video, then **proves the
 removal actually happened** instead of assuming it did.
 
 Built on the `ExifSanitizer` from `the parent project` (`cli/sanitizer.py`), which
-handled eight image extensions through one engine. This extends that to four
-engines across 38 extensions, and replaces "no exception was raised" with
+handled eight image extensions through one engine. This extends that to five
+engines across 41 extensions, and replaces "no exception was raised" with
 measured verification.
 
 ---
@@ -273,7 +273,7 @@ metascrub selftest
   PASS exiftool     <volume>\Projects\.tools\exiftool\exiftool.EXE
   PASS ffmpeg       ...
   PASS tkinter      available; `metascrub gui` will run
-  PASS engines      all 4 ready
+  PASS engines      all 5 ready
   PASS round trip   a PDF went in carrying a value and came out without it
 ```
 
@@ -330,6 +330,7 @@ position cannot be read is worse than an ugly one.
 | Raw photo | dng cr2 nef arw orf rw2 | exiftool | **partial**, maker notes may retain private records |
 | PDF | pdf | pikepdf full rewrite | complete |
 | Office | docx docm xlsx xlsm pptx pptm | zip rebuild | complete |
+| Legacy Office | doc xls ppt | olefile stream rewrite | **partial**, the applications keep second copies |
 | Video | mp4 m4v mov mkv webm avi | ffmpeg remux | complete |
 | Audio | mp3 m4a flac wav ogg opus | ffmpeg remux | complete |
 
@@ -339,23 +340,74 @@ promises. A partial result always says so.
 
 ### Not handled, and why
 
-- **`.doc`, `.xls`, `.ppt`** (legacy OLE2) are **deferred, not shipped**. Their
-  metadata lives in `\005SummaryInformation` streams, and `olefile` can only
-  overwrite a stream in place at its existing length. It is not shipped because
-  it could not be tested: there is no way on this machine to produce a genuine
-  legacy Office document to build a fixture from, and an untested rewrite path
-  for legacy documents can corrupt files a user cannot regenerate. A clear
-  refusal beats a half-working rewrite.
-  **Discharge condition:** these move into the capability table only when
-  `tests/fixtures/ole2/` exists and `tests/test_ole2.py` passes against it.
-  `tests/test_coverage_gate.py` fails if anyone ships them without that, so the
-  deferral cannot be discharged by forgetting it.
+- **Nothing is currently deferred.** `.doc`, `.xls` and `.ppt` were until
+  2026-09-04; they now ship as PARTIAL, and *Legacy Office, and what it does not
+  promise* below says what survives. `tests/test_coverage_gate.py` still
+  enforces the mechanism, so the next deferral cannot be discharged by
+  forgetting it.
 - **`.bmp`** is absent because exiftool 13.29 answers *"Writing of BMP files is
   not yet supported"*. Listing a format the tool cannot write would be a promise
   it cannot keep.
 - **Tracked changes and comments** in Office documents are detected and
   **reported, not removed**. They are user-visible content, not metadata, and
   deleting them silently would destroy work.
+
+### Legacy Office, and what it does not promise
+
+`.doc`, `.xls` and `.ppt` were deferred until 2026-09-04. The reason was never
+the format; it was that no fixture could be built here, and an untested rewrite
+path for documents a user cannot regenerate is worse than a refusal. LibreOffice
+turned out to solve that: its MS Word 97 / MS Excel 97 / MS PowerPoint 97 export
+filters produce genuine compound files (`d0cf11e0a1b11ae1`) carrying seeded
+metadata, so `tests/fixtures/ole2/` builds a real one at test time and skips,
+never fails, where LibreOffice is absent.
+
+**The stream contents are replaced; the container is not rebuilt.** `olefile`
+can only overwrite a stream at its existing length, which is what made this look
+hard. It stops being a problem once you notice a property set does not have to
+be full to be valid: MS-OLEPS allows a property set with zero properties, and
+readers reach one through an offset table and never look past it. So the engine
+writes a valid EMPTY property set and zero-fills the rest of the allocation.
+Nothing but stream payload ever changes, and `tests/test_ole2.py` asserts that
+rather than trusting it: the 512-byte header is compared byte for byte, the
+stream inventory and every stream length must match, and every stream the
+engine does not target must come out byte-identical.
+Zero-filling the remainder is not tidiness: leaving the old property bytes in an
+allocation nothing points at any more is the PDF incremental-update mistake in a
+different container.
+
+Removed: both property streams, matched by basename at any depth, so the copy
+inside an embedded object's storage is cleaned too (no fixture here holds
+one, so that is what the code does rather than something measured); the
+`\001CompObj` user type, which names the producing application **and
+its UI language** (LibreOffice writes "Microsoft Word-Dokument" on an English
+document); PowerPoint's `Current User` stream, whose userName is the last person
+to edit the deck; and Excel's `WRITEACCESS` record, which is the Excel user name
+and is not in a property stream at all.
+
+**Partial, and here is exactly what survives.** Measured with exiftool 13.59 on
+a scrubbed `.doc`:
+
+```
+[MS-DOC] CreateDate, ModifyDate, LastPrinted, RevisionNumber,
+         TotalEditTime, Words, Characters, Pages, Paragraphs, Lines
+```
+
+Word keeps a second copy of its timestamps and statistics in the DOP inside the
+`WordDocument`/`Table` streams. The give-away that it is a second carrier and
+not a leftover: the surviving `CreateDate` is shifted by the local UTC offset,
+because it is now being read from a local-time field in the DOP instead of the
+FILETIME in the property set. `SttbfAssoc` and `SttbSavedBy`, which duplicate
+the author and title and record the last ten save paths, also survive on
+documents written by Microsoft Word. They are deliberately not touched:
+LibreOffice's filter does not write them (measured, zero sentinel hits in
+`1Table`), so any code aimed at them would be untested surgery against a
+structure found through a version-dependent offset table. Being able to test the
+property streams did not make the rest testable.
+
+**Needs `olefile`**, which `requirements.txt` installs. Without it the engine
+reports itself unavailable and `metascrub doctor` says so, rather than the
+format silently disappearing.
 
 ---
 
@@ -375,7 +427,7 @@ promises. A partial result always says so.
   as CLEAN and returned before any engine ran. Measured 2026-09-04 on a machine
   without exiftool on PATH: a PDF carrying its author string twice reported
   `CLEAN`, `verified clean 1`, exit 0, and still carried it twice afterwards. It
-  affected every format, because all four engines read their baseline through
+  affected every format, because every engine reads its baseline through
   exiftool. `ExifSession.read()` now returns a `MetadataRead` carrying `ok`, an
   unreadable baseline fails the file, and `tests/test_failopen.py` asserts over
   the whole format cross-product that nothing reports clean when metadata cannot
@@ -391,7 +443,27 @@ promises. A partial result always says so.
   `-charset filename=UTF8`; without them exiftool reports "No matching files",
   which looks like a skipped file rather than an encoding problem.
 - Container rewrites are atomic (`os.replace` onto a temp file in the same
-  directory), so an interrupted run cannot leave a truncated document.
+  directory), so an interrupted run cannot leave a truncated document. The OLE2
+  engine edits a copy for this reason specifically: `olefile` writes in place,
+  and an interrupted in-place edit of a compound file leaves a document that
+  opens as garbage.
+- **A stream's own name is not a leak.** An OLE2 directory stores stream names
+  as UTF-16LE, so a metadata value that happens to equal one of them is found by
+  a raw byte search of a file that is genuinely clean. Measured: LibreOffice
+  writes `Current User` as the PowerPoint user name, which is also the name of
+  the stream holding it, and a clean `.ppt` was reported as still leaking. The
+  residual scan now blanks the 64-byte name field of each directory entry and
+  nothing else, so payloads, the FAT and sector slack are all still searched;
+  `tests/test_ole2.py` plants the same string back into a stream payload and
+  requires the scan to find it, so the exclusion cannot quietly become a way to
+  miss a real survivor.
+- **Do not trust a converter's failure as evidence about your file.** Checking
+  that a scrubbed `.xls` still opens by running `soffice --convert-to txt` fails
+  with "no export filter ... found" on a pristine file, because Calc has no
+  plain-text filter. Read as damage, it accuses the scrubber of corrupting a
+  document it handled correctly. The validity tests convert the untouched
+  fixture first as a control, so a conversion that cannot work here skips
+  instead of failing.
 
 ---
 
@@ -416,9 +488,16 @@ window's own verdict. `tests/test_theme.py` enforces the contrast floor and the
 rule that colour is never the only channel carrying a verdict, and
 `tests/test_selftest.py` checks that the self test can actually fail.
 
-207 passing and 1 skipped as of 2026-09-04. The skip is deliberate:
-`tests/test_coverage_gate.py` refuses to enforce OLE2 while it is deferred, and
-fails if anyone ships it without fixtures.
+`tests/test_ole2.py` covers the legacy compound files: that the fixture really
+is one, that the property streams come out empty AND zero-filled rather than
+merely unreferenced, that the stream inventory and every stream length are
+unchanged, that LibreOffice can still open the result, and that a file the
+engine cannot safely handle is refused with the input left untouched.
+
+267 passing and 4 skipped as of 2026-09-04. All four skips are deliberate:
+`.doc`, `.xls` and `.ppt` skip the COMPLETE-formats check because they are
+declared PARTIAL, and one test that exercises the missing-LibreOffice path skips
+on a machine that has LibreOffice.
 
 ---
 

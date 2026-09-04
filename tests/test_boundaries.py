@@ -73,18 +73,37 @@ def test_unsupported_extension_is_refused_clearly(tmp_path):
     assert result["removed_fields"] == []
 
 
-def test_deferred_format_is_distinct_from_unsupported(tmp_path):
+def test_deferred_format_is_distinct_from_unsupported(tmp_path, monkeypatch):
     """
     A knowingly-deferred format must not look like an unknown one. The user acts
     differently on "we have not built this yet" than on "this is not a media
     file".
+
+    This used to be written against .doc, which was the deferred format at the
+    time. .doc shipped on 2026-09-04 and DEFERRED is now empty, so the deferral
+    is injected here instead of borrowing whichever format happens to be waiting
+    this month. That is the point: the DEFERRED branch has to keep working while
+    nothing is using it, or the next deferral ships a broken code path.
     """
-    path = tmp_path / "legacy.doc"
+    from metascrub import capabilities
+
+    monkeypatch.setitem(
+        capabilities.DEFERRED, ".notyet",
+        "a synthetic deferral, long enough to satisfy the reason gate",
+    )
+    path = tmp_path / "legacy.notyet"
     path.write_bytes(b"\xd0\xcf\x11\xe0" + b"\x00" * 64)
     with MetadataScrubber(backup=False) as scrubber:
         result = scrubber.sanitize_file(str(path))
     assert result["status"] == STATUS_DEFERRED
-    assert "fixture" in result["detail"]
+    assert "synthetic deferral" in result["detail"]
+
+    # And an extension nobody deferred is still UNSUPPORTED, so the two really
+    # are distinct rather than one label having quietly swallowed the other.
+    other = tmp_path / "legacy.neverheardofit"
+    other.write_bytes(b"whatever")
+    with MetadataScrubber(backup=False) as scrubber:
+        assert scrubber.sanitize_file(str(other))["status"] == STATUS_UNSUPPORTED
 
 
 def test_extension_that_lies_about_the_container_fails_safely(tmp_path):
