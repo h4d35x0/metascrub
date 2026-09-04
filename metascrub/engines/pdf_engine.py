@@ -45,6 +45,26 @@ except ImportError:
 _ROOT_METADATA_KEYS = ("/Metadata", "/PieceInfo", "/LastModified", "/AcroForm")
 
 
+def _piece_info_note(piece_info) -> str:
+    """
+    Describe what a /PieceInfo dictionary is about to lose, for the user.
+
+    Returns "" when there is nothing worth warning about, so that an empty or
+    unreadable dictionary does not produce a scary message about nothing.
+    """
+    try:
+        apps = [str(k).lstrip("/") for k in piece_info.keys()]
+    except Exception:
+        return ""
+    if not apps:
+        return ""
+    listed = ", ".join(sorted(apps)[:4])
+    if len(apps) > 4:
+        listed += f", and {len(apps) - 4} more"
+    return ("NOTE: removed private application data (/PieceInfo) belonging to "
+            f"{listed}; editable artwork or layer state may be lost")
+
+
 class PdfEngine(BaseEngine):
     name = "pdf"
     supports_selective = False
@@ -79,6 +99,28 @@ class PdfEngine(BaseEngine):
                                     continue
                             except Exception:
                                 continue
+
+                        # /PieceInfo is a genuine leak vector: it names the
+                        # producing application and can carry editing history.
+                        # It is also where a design tool keeps private artwork
+                        # data (Illustrator layers, live effects, InDesign
+                        # state), and removing it is not reversible.
+                        #
+                        # It is still removed, because leaving it would defeat
+                        # the point of the tool. But it must not be removed
+                        # QUIETLY. Measured 2026-09-04: a PDF carrying private
+                        # application data lost it with the console showing only
+                        # "SANITIZED", and `inspect` beforehand showed nothing
+                        # either, because exiftool does not report /PieceInfo.
+                        # The user had no way to see it coming or going.
+                        #
+                        # AcroForm already had a guard for exactly this concern
+                        # and this one did not, which is the inconsistency.
+                        if key == "/PieceInfo":
+                            note = _piece_info_note(pdf.Root[key])
+                            if note:
+                                targeted.append(note)
+
                         del pdf.Root[key]
                         targeted.append(f"root {key}")
 

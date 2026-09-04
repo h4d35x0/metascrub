@@ -108,3 +108,66 @@ def test_file_still_opens_after_sanitizing(kind, tmp_path):
         assert probe.returncode == 0, f"ffmpeg cannot decode the output: {probe.stderr}"
 
     assert before_size > 0
+
+
+def test_pieceinfo_removal_is_announced_not_silent(tmp_path):
+    """
+    /PieceInfo is a real leak vector and is removed, but it is also where a
+    design tool keeps private artwork data, and losing that is not reversible.
+
+    Measured 2026-09-04 before this was fixed: a PDF carrying private
+    application data lost it while the console showed only "SANITIZED", and
+    `inspect` beforehand showed nothing either, because exiftool does not report
+    /PieceInfo. The user could neither see it coming nor see it go.
+
+    /AcroForm already had a guard for exactly this concern. This asserts the
+    warning, not the removal, so the leak still gets cleaned.
+    """
+    import pikepdf
+
+    from metascrub.scrubber import STATUS_SANITIZED, MetadataScrubber
+
+    path = str(tmp_path / "artwork.pdf")
+    pdf = pikepdf.new()
+    pdf.add_blank_page()
+    pdf.Root["/PieceInfo"] = pikepdf.Dictionary({
+        "/Illustrator": pikepdf.Dictionary({"/Private": pikepdf.String("ART")}),
+    })
+    pdf.docinfo["/Author"] = "PIECEINFOSENTINEL5150"
+    pdf.save(path)
+
+    with MetadataScrubber(backup=False) as scrubber:
+        result = scrubber.sanitize_file(path, remove_all=True)
+
+    assert result["status"] == STATUS_SANITIZED
+
+    notes = [f for f in result["removed_fields"]
+             if isinstance(f, str) and f.startswith("NOTE:")]
+    assert notes, "PieceInfo was removed with no warning to the user"
+    assert "PieceInfo" in notes[0]
+    assert "Illustrator" in notes[0], "the note should name whose data was lost"
+
+    # The leak itself must still be gone; this is a visibility fix, not a
+    # reason to stop cleaning.
+    with pikepdf.open(path) as after:
+        assert "/PieceInfo" not in after.Root
+
+
+def test_no_pieceinfo_note_when_there_is_nothing_to_warn_about(tmp_path):
+    """An ordinary PDF must not produce a scary message about nothing."""
+    import pikepdf
+
+    from metascrub.scrubber import MetadataScrubber
+
+    path = str(tmp_path / "plain.pdf")
+    pdf = pikepdf.new()
+    pdf.add_blank_page()
+    pdf.docinfo["/Author"] = "PLAINSENTINEL5151"
+    pdf.save(path)
+
+    with MetadataScrubber(backup=False) as scrubber:
+        result = scrubber.sanitize_file(path, remove_all=True)
+
+    notes = [f for f in result["removed_fields"]
+             if isinstance(f, str) and f.startswith("NOTE:")]
+    assert not notes, f"unexpected warning on a plain PDF: {notes}"
