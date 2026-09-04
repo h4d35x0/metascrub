@@ -318,3 +318,32 @@ def test_window_survives_when_drop_registration_fails(tk_root, monkeypatch):
     assert win.dnd_enabled is False
     assert "Add Files" in win.drop_hint.cget("text")
     assert "Drop files here" not in win.drop_hint.cget("text")
+
+
+def test_destroying_the_window_stops_its_timer(tk_root):
+    """
+    The drain loop reschedules itself forever. If a destroyed window keeps that
+    timer alive, it points at dead widgets, and once enough windows have been
+    created and destroyed the interpreter teardown raises
+    "RuntimeError: main thread is not in main loop".
+
+    That is exactly how this surfaced: it was invisible until the suite grew
+    past a certain size, then appeared as a warning with no obvious owner.
+    """
+    top = tk.Toplevel(tk_root)
+    top.withdraw()
+    win = ScrubberWindow(top)
+
+    assert win._drain_id is not None, "the drain loop never started"
+    assert win._closed is False
+
+    top.destroy()
+    tk_root.update()
+
+    assert win._closed is True, "destroying the window did not stop its drain loop"
+    assert win._drain_id is None, "the pending timer was not cancelled"
+
+    # And a further tick must be a no-op rather than an error.
+    win._drain_queue()
+    win._schedule_drain()
+    assert win._drain_id is None

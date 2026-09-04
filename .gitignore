@@ -34,3 +34,6 @@ vendor/
 *.swp
 Thumbs.db
 .DS_Store
+
+# Agent worktrees created by the harness
+.claude/

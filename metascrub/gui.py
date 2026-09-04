@@ -132,7 +132,16 @@ class ScrubberWindow:
         self._build_status_bar()
 
         self._refresh_engine_status()
-        self.root.after(100, self._drain_queue)
+
+        # The drain loop reschedules itself forever. Hold its id and stop it
+        # when the window goes away, otherwise a destroyed window keeps a live
+        # Tk timer pointing at dead widgets. That surfaced as
+        # "RuntimeError: main thread is not in main loop" during interpreter
+        # teardown once enough windows had been created and destroyed.
+        self._drain_id: Optional[str] = None
+        self._closed = False
+        self.root.bind("<Destroy>", self._on_destroy, add="+")
+        self._schedule_drain()
 
     # LAYOUT
 
@@ -508,7 +517,30 @@ class ScrubberWindow:
 
     # MAIN-THREAD QUEUE DRAIN
 
+    def _schedule_drain(self) -> None:
+        if self._closed:
+            return
+        try:
+            self._drain_id = self.root.after(100, self._drain_queue)
+        except tk.TclError:
+            # The widget was destroyed between one tick and the next.
+            self._closed = True
+
+    def _on_destroy(self, event) -> None:
+        """Stop the drain loop when this window's own widget is destroyed."""
+        if event.widget is not self.root:
+            return  # a child widget, not the window itself
+        self._closed = True
+        if self._drain_id is not None:
+            try:
+                self.root.after_cancel(self._drain_id)
+            except tk.TclError:
+                pass
+            self._drain_id = None
+
     def _drain_queue(self) -> None:
+        if self._closed:
+            return
         try:
             while True:
                 kind, payload = self._queue.get_nowait()
@@ -521,7 +553,7 @@ class ScrubberWindow:
                     messagebox.showerror(APP_TITLE, f"Run failed:\n\n{payload}")
         except queue.Empty:
             pass
-        self.root.after(100, self._drain_queue)
+        self._schedule_drain()
 
     def _apply_result(self, result: Dict) -> None:
         path = result.get("file", "")

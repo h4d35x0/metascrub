@@ -35,6 +35,20 @@ _COVERED_BY = {
     ".docm": ".docx", ".xlsm": ".xlsx", ".pptm": ".pptx",
     ".m4v": ".mp4", ".mov": ".mp4", ".webm": ".mkv", ".avi": ".mkv",
     ".m4a": ".mp3", ".wav": ".flac", ".ogg": ".mp3", ".opus": ".mp3",
+    # Added 2026-09-04. Each raw format below was verified individually through
+    # the full pipeline: exiftool identified it as its own FileType rather than
+    # as TIFF, accepted a write, and the sentinel was gone from the output bytes
+    # afterwards with the file still opening. They run the identical exiftool
+    # code path as .tiff, which is what makes the proxy honest rather than a
+    # convenience. Formats where exiftool refused, or reported the file as plain
+    # TIFF, were left out of the capability table entirely.
+    ".pef": ".tiff", ".srw": ".tiff", ".erf": ".tiff", ".mos": ".tiff",
+    ".iiq": ".tiff", ".arq": ".tiff", ".sr2": ".tiff", ".rwl": ".tiff",
+    ".nrw": ".tiff", ".raw": ".tiff", ".gpr": ".tiff",
+    # MP4-family variants remux through the same ffmpeg path as .mp4.
+    ".f4v": ".mp4", ".m4b": ".mp4",
+    # Same container family as their tested sibling.
+    ".m2ts": ".ts", ".aif": ".aiff",
 }
 
 

@@ -107,6 +107,42 @@ _IMAGE: Dict[str, FormatSpec] = {
                        "raw container; maker notes may retain private records"),
     ".rw2": FormatSpec(Engine.EXIFTOOL, Completeness.PARTIAL, Container.RAW, False,
                        "raw container; maker notes may retain private records"),
+
+    # Added 2026-09-04. Each one was measured, not assumed: a TIFF was written
+    # under the extension, exiftool identified it as that specific FileType
+    # (not as TIFF) and accepted a write, and the full metascrub pipeline then
+    # removed the sentinel from the output bytes with the file still opening.
+    #
+    # Formats deliberately NOT added, with the measured reason:
+    #   .cr3 .raf .x3f .crw .mrw .cs1 .psb  exiftool reports FileType TIFF for a
+    #       file with that extension and refuses to write it as the target
+    #       format. These containers are not TIFF-based, so no fixture can be
+    #       built without genuine camera samples, and the .tiff proxy used by
+    #       the coverage gate would be a false claim rather than a shortcut.
+    #   .3fr .fff  exiftool identifies them correctly but will not write one
+    #       that was synthesised rather than produced by a camera.
+    ".pef": FormatSpec(Engine.EXIFTOOL, Completeness.PARTIAL, Container.RAW, False,
+                       "raw container; maker notes may retain private records"),
+    ".srw": FormatSpec(Engine.EXIFTOOL, Completeness.PARTIAL, Container.RAW, False,
+                       "raw container; maker notes may retain private records"),
+    ".erf": FormatSpec(Engine.EXIFTOOL, Completeness.PARTIAL, Container.RAW, False,
+                       "raw container; maker notes may retain private records"),
+    ".mos": FormatSpec(Engine.EXIFTOOL, Completeness.PARTIAL, Container.RAW, False,
+                       "raw container; maker notes may retain private records"),
+    ".iiq": FormatSpec(Engine.EXIFTOOL, Completeness.PARTIAL, Container.RAW, False,
+                       "raw container; maker notes may retain private records"),
+    ".arq": FormatSpec(Engine.EXIFTOOL, Completeness.PARTIAL, Container.RAW, False,
+                       "raw container; maker notes may retain private records"),
+    ".sr2": FormatSpec(Engine.EXIFTOOL, Completeness.PARTIAL, Container.RAW, False,
+                       "raw container; maker notes may retain private records"),
+    ".rwl": FormatSpec(Engine.EXIFTOOL, Completeness.PARTIAL, Container.RAW, False,
+                       "raw container; maker notes may retain private records"),
+    ".nrw": FormatSpec(Engine.EXIFTOOL, Completeness.PARTIAL, Container.RAW, False,
+                       "raw container; maker notes may retain private records"),
+    ".raw": FormatSpec(Engine.EXIFTOOL, Completeness.PARTIAL, Container.RAW, False,
+                       "raw container; maker notes may retain private records"),
+    ".gpr": FormatSpec(Engine.EXIFTOOL, Completeness.PARTIAL, Container.RAW, False,
+                       "raw container; maker notes may retain private records"),
 }
 
 # TIER 2: PDF. exiftool is NOT used here and must not be.
@@ -162,10 +198,32 @@ DEFERRED: Dict[str, str] = {
 
 # TIER 5: audio and video. ffmpeg remux, not exiftool.
 _AV_NOTE = "container, per-stream and chapter metadata; remux without re-encoding"
+#
+# The 2026-09-04 additions (.f4v .m4b .ts .m2ts .aiff .aif) were each measured
+# end to end: ffmpeg muxed a fixture that stored the tag, the pipeline removed
+# the sentinel from the output bytes, and ffprobe still parsed the result.
+#
+# Containers deliberately NOT added, with the measured reason:
+#   .wmv .wma   the remux leaves a value behind and verification reports
+#               residual_found. ASF is not cleanable by this engine, so
+#               listing it would be a promise the tool cannot keep.
+#   .aac .ac3   raw bitstreams with no metadata container; ffmpeg accepts the
+#               -metadata flag and stores nothing, so there is no fixture and
+#               nothing to remove.
+#   .3gp .mpg .amr  no fixture could be built that actually stored the tag with
+#               the codecs available here.
+#   .qt .mqv .lrv .f4a  ffmpeg muxes these happily when told the format
+#               explicitly, but av_engine.py names its temp file with the
+#               TARGET extension and lets ffmpeg infer the muxer, and ffmpeg
+#               binds no output muxer to these extensions:
+#               "Error opening output files: Invalid argument". Supporting them
+#               needs an explicit extension-to-muxer map in the engine, which is
+#               an engine change rather than a table entry. See tasks/todo.md.
 _AV: Dict[str, FormatSpec] = {
     ext: FormatSpec(Engine.AV, Completeness.COMPLETE, Container.RAW, True, _AV_NOTE)
     for ext in (".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi",
-                ".m4a", ".mp3", ".flac", ".wav", ".ogg", ".opus")
+                ".m4a", ".mp3", ".flac", ".wav", ".ogg", ".opus",
+                ".f4v", ".m4b", ".ts", ".m2ts", ".aiff", ".aif")
 }
 
 CAPABILITIES: Dict[str, FormatSpec] = {}

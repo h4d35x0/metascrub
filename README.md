@@ -5,7 +5,7 @@ removal actually happened** instead of assuming it did.
 
 Built on the `ExifSanitizer` from `the parent project` (`cli/sanitizer.py`), which
 handled eight image extensions through one engine. This extends that to four
-engines across 38 extensions, and replaces "no exception was raised" with
+engines across 55 extensions, and replaces "no exception was raised" with
 measured verification.
 
 ---
@@ -327,11 +327,11 @@ position cannot be read is worse than an ugly one.
 | Family | Extensions | Engine | Guarantee |
 |---|---|---|---|
 | Images | jpg jpeg jpe png gif webp tiff tif heic heif avif jp2 psd | exiftool | complete |
-| Raw photo | dng cr2 nef arw orf rw2 | exiftool | **partial**, maker notes may retain private records |
+| Raw photo | dng cr2 nef arw orf rw2 pef srw erf mos iiq arq sr2 rwl nrw raw gpr | exiftool | **partial**, maker notes may retain private records |
 | PDF | pdf | pikepdf full rewrite | complete |
 | Office | docx docm xlsx xlsm pptx pptm | zip rebuild | complete |
-| Video | mp4 m4v mov mkv webm avi | ffmpeg remux | complete |
-| Audio | mp3 m4a flac wav ogg opus | ffmpeg remux | complete |
+| Video | mp4 m4v mov mkv webm avi f4v m4b ts m2ts | ffmpeg remux | complete |
+| Audio | mp3 m4a flac wav ogg opus aiff aif | ffmpeg remux | complete |
 
 `complete` and `partial` are separate states carried in every result, because
 "we support this format" and "we can fully clean this format" are different
@@ -353,6 +353,29 @@ promises. A partial result always says so.
 - **`.bmp`** is absent because exiftool 13.29 answers *"Writing of BMP files is
   not yet supported"*. Listing a format the tool cannot write would be a promise
   it cannot keep.
+- **`.cr3`, `.raf`, `.x3f`, `.crw`, `.mrw`, `.cs1`, `.psb`** are absent because
+  no fixture can be built for them here. These containers are not TIFF-based,
+  so exiftool reports a file carrying that extension as plain `TIFF` and
+  refuses to write it as the target format. Adding them would mean claiming
+  coverage through the `.tiff` proxy, which would be a false claim rather than
+  a shortcut. They need genuine camera samples.
+- **`.3fr` and `.fff`** are absent because exiftool identifies them correctly
+  but will not write one that was synthesised rather than produced by a camera.
+- **`.wmv` and `.wma`** are absent because the tool cannot actually clean them.
+  The ffmpeg remux leaves a value behind and verification reports
+  `residual_found`. That is the check doing its job, and shipping the format
+  anyway would be exactly the kind of unkept promise this table exists to
+  prevent.
+- **`.aac` and `.ac3`** are raw bitstreams with no metadata container. ffmpeg
+  accepts `-metadata` and stores nothing, so there is no fixture to build and
+  nothing to remove.
+- **`.qt`, `.mqv`, `.lrv`, `.f4a`** are deferred, not refused. ffmpeg muxes them
+  when told the format explicitly, but the av engine names its temporary file
+  with the target extension and lets ffmpeg infer the muxer, and ffmpeg binds no
+  output muxer to those extensions (`Error opening output files: Invalid
+  argument`). They need an explicit extension-to-muxer map in the engine.
+  **Discharge condition:** they move into the table when `av_engine.py` selects
+  the output format explicitly and a fixture for each passes the byte search.
 - **Tracked changes and comments** in Office documents are detected and
   **reported, not removed**. They are user-visible content, not metadata, and
   deleting them silently would destroy work.
@@ -361,6 +384,12 @@ promises. A partial result always says so.
 
 ## Notes worth knowing
 
+- **Every format in the table was measured, not assumed.** A format is listed
+  only when a fixture carrying a unique sentinel could be built, the full
+  pipeline removed that sentinel from the output bytes, and the file still
+  opened afterwards. `exiftool -listwf` reporting a format as writable is not
+  sufficient evidence and was not treated as such: of 26 raw extensions
+  probed, 11 passed and 7 were rejected for failing the fixture test.
 - **TIFF cannot have its IFD0 dropped.** exiftool answers *"Can't delete IFD0
   from TIFF"* and leaves `Artist` and `Copyright` in place, because in a TIFF
   the EXIF IFD *is* the image structure. The exiftool engine follows `-all=`
@@ -416,7 +445,7 @@ window's own verdict. `tests/test_theme.py` enforces the contrast floor and the
 rule that colour is never the only channel carrying a verdict, and
 `tests/test_selftest.py` checks that the self test can actually fail.
 
-207 passing and 1 skipped as of 2026-09-04. The skip is deliberate:
+229 passing and 1 skipped as of 2026-09-04. The skip is deliberate:
 `tests/test_coverage_gate.py` refuses to enforce OLE2 while it is deferred, and
 fails if anyone ships it without fixtures.
 

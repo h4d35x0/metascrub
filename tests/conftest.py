@@ -212,6 +212,39 @@ def make_audio(tmp_path, ext: str = ".mp3"):
     return path, value
 
 
+def make_transport_stream(tmp_path, ext: str = ".ts"):
+    """
+    MPEG transport stream. Genuinely a different container from MP4 and
+    Matroska, so it gets a real fixture rather than claiming coverage through
+    one of them.
+    """
+    path = str(tmp_path / f"fixture{ext}")
+    value = sentinel(ext.lstrip("."))
+    _ffmpeg([
+        "-f", "lavfi", "-i", "testsrc=size=64x64:rate=5:duration=1",
+        "-pix_fmt", "yuv420p",
+        "-metadata", f"title={value}",
+        "-metadata", f"artist={value}",
+        path,
+    ])
+    assert raw_contains(path, value), f"{ext} fixture did not store the sentinel"
+    return path, value
+
+
+def make_aiff(tmp_path, ext: str = ".aiff"):
+    """AIFF, which is IFF-chunked rather than ISO-BMFF or Ogg-framed."""
+    path = str(tmp_path / f"fixture{ext}")
+    value = sentinel(ext.lstrip("."))
+    _ffmpeg([
+        "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+        "-metadata", f"title={value}",
+        "-metadata", f"artist={value}",
+        path,
+    ])
+    assert raw_contains(path, value), f"{ext} fixture did not store the sentinel"
+    return path, value
+
+
 # BUILDER REGISTRY, used to drive the cross-product tests
 
 IMAGE_FORMATS = [(".jpg", "JPEG"), (".png", "PNG"), (".gif", "GIF"),
@@ -239,6 +272,14 @@ def build(kind: str, tmp_path):
         if not HAVE_FFMPEG:
             pytest.skip("ffmpeg not available")
         return make_audio(tmp_path, kind)
+    if kind in (".ts", ".m2ts"):
+        if not HAVE_FFMPEG:
+            pytest.skip("ffmpeg not available")
+        return make_transport_stream(tmp_path, kind)
+    if kind in (".aiff", ".aif"):
+        if not HAVE_FFMPEG:
+            pytest.skip("ffmpeg not available")
+        return make_aiff(tmp_path, kind)
     raise AssertionError(f"no fixture builder for {kind}")
 
 
@@ -246,6 +287,9 @@ def build(kind: str, tmp_path):
 # capability table but absent here is caught by test_coverage.py.
 ALL_KINDS = [ext for ext, _ in IMAGE_FORMATS] + [
     ".pdf", ".docx", ".xlsx", ".pptx", ".mp4", ".mkv", ".mp3", ".flac",
+    # Added 2026-09-04. Only the containers that are genuinely distinct get a
+    # real fixture; the rest declare a proxy in test_coverage_gate._COVERED_BY.
+    ".ts", ".aiff",
 ]
 
 
