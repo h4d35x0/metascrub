@@ -155,10 +155,33 @@ class MetadataScrubber:
 
         before_tags = _real_tags(before.metadata)
 
+        # A baseline exiftool could not PARSE is an ERROR for exactly the same
+        # reason an unreadable one is, and it arrives wearing the successful
+        # read's clothes. Measured 2026-09-04 with exiftool 13.29 on a truncated
+        # SVG carrying sodipodi:docname: exiftool identifies FileType SVG, exits
+        # zero, reports no SVG tags at all, and says
+        # "XMP format error (no closing tag for svg)". Everything it emits lands
+        # in the File and ExifTool pseudo-groups, _real_tags() is empty, and the
+        # CLEAN short circuit below then told the user "no metadata carriers
+        # found" about a file that carries an editor's docname.
+        #
+        # Checked only when there are no real tags. When exiftool did surface
+        # document tags there is a baseline to verify against and the engine
+        # runs as before, so no format runs an engine it did not run before this
+        # check existed. The failure mode this closes is the empty one.
+        if not before_tags and before.unparsed:
+            return self._error(
+                file_path,
+                "exiftool could not parse this file, so it reported no metadata "
+                "carriers; that is not evidence the file carries none: "
+                + "; ".join(before.parse_failures),
+                start,
+            )
+
         # Nothing to do. Reported honestly as CLEAN rather than as a successful
         # sanitize, so a user is never told metadata was removed from a file
         # that never carried any. Reachable only on a read that actually
-        # succeeded.
+        # succeeded AND that exiftool understood.
         if not before_tags:
             return self._terminal(
                 file_path, STATUS_CLEAN, "no metadata carriers found", start, spec=spec
@@ -202,7 +225,14 @@ class MetadataScrubber:
         verification = verify(
             file_path, spec, before.metadata, after.metadata,
             only_fields=targeted_fields if selective else None,
-            after_readable=after.ok,
+            # `parsed`, not `ok`. The same hole exists on the way out: if the
+            # engine left a file exiftool can no longer parse, an empty `after`
+            # would read as "no carriers remain" when it means "we could not
+            # look". Measured across all 31 fixture formats, no scrubbed output
+            # is UNPARSED, so this tightening changes no measured outcome; it
+            # closes the symmetric case rather than leaving the identical bug
+            # standing one line later.
+            after_readable=after.parsed,
         )
 
         if self.reset_times:

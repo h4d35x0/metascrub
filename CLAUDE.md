@@ -42,8 +42,10 @@ embeds a unique sentinel and the assertion searches the bytes for it.
 2. **"Could not read" and "carries nothing" must never share a representation.**
    `ExifSession.read()` used to swallow every exception into an empty dict, so
    with exiftool absent every file of every format reported CLEAN, verified
-   clean, exit 0, untouched. It now returns `MetadataRead(metadata, ok, error)`.
-   The same rule applies anywhere else a sentinel means "unset".
+   clean, exit 0, untouched. It now returns
+   `MetadataRead(metadata, outcome, error, parse_failures)`. The same rule
+   applies anywhere else a sentinel means "unset", and it applied again to
+   this same read one level up: see trap 12.
 
 3. **Tk is not thread safe, and it deadlocks rather than raising.** Reading a Tk
    variable (`backup_var.get()`) from the worker thread hung every run with no
@@ -100,6 +102,23 @@ embeds a unique sentinel and the assertion searches the bytes for it.
    overcorrection test lands in the SAME commit: it is the only thing standing
    between a narrow exclusion and a silent blind spot.
 
+12. **exiftool answering "nothing here" has TWO meanings, and only one of them
+   is evidence.** A read that SUCCEEDS while warning that it could not parse the
+   document surfaces zero tags, and `_real_tags()` cannot tell that apart from a
+   file that genuinely carries none. Measured 2026-09-04 on a truncated `.svg`:
+   `FileType: SVG`, exit zero, `XMP format error (no closing tag for svg)`, no
+   SVG tags, reported CLEAN while carrying `sodipodi:docname`. `read()` now
+   returns `ReadOutcome.PARSED` / `UNPARSED` / `FAILED` and an unparseable
+   baseline is refused, never cleaned.
+   The trap inside the trap: "treat any ExifTool warning as unparseable" is
+   MEASURABLY wrong, not just clumsy. A perfectly good `.ott` carries
+   `Unrecognized MIMEType application/vnd.oasis.opendocument.text-template` AND
+   reports zero tags after scrubbing, so it lands in the identical shape. The
+   allowlist in `exif_io.py` is the only thing separating them, and the rule for
+   adding to it is not the wording: a warning is benign only if exiftool emits
+   it on reads that ALSO return document tags. `test_unparseable.py` enforces
+   that against a real file.
+
 ---
 
 ## Layout
@@ -108,7 +127,7 @@ embeds a unique sentinel and the assertion searches the bytes for it.
 |---|---|
 | `metascrub/scrubber.py` | orchestrator, statuses, backup policy |
 | `metascrub/verify.py` | the residual byte scan; the heart of the project |
-| `metascrub/exif_io.py` | shared exiftool session, `MetadataRead` |
+| `metascrub/exif_io.py` | shared exiftool session, `MetadataRead`, `ReadOutcome` |
 | `metascrub/capabilities.py` | format table: engine + completeness per extension |
 | `metascrub/engines/` | exiftool, pdf (pikepdf), ooxml (zip), odf (zip), ole2 (olefile), av (ffmpeg), svg (XML text) |
 | `metascrub/gui.py` | Tkinter window; a view over MetadataScrubber, never a fork |
@@ -132,7 +151,8 @@ python -m metascrub gui
 
 The 5 skips are intentional: .doc, .xls, .ppt and .svg are PARTIAL so they skip
 the COMPLETE-formats check, and one test of the missing-LibreOffice path skips
-where LibreOffice is present.
+where LibreOffice is present. Measured on the dev machine 2026-09-04 after the
+unparseable-baseline fix: 899 passed, 5 skipped, about 4m30s.
 
 A pass count is an environment fact, not a gate. Compare TOTALS and FAILURES
 first, then read every skip reason with `-rs`. The same tree measured 291/5 on

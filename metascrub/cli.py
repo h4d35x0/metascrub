@@ -209,7 +209,16 @@ def cmd_inspect(args: argparse.Namespace) -> int:
                     continue
                 print(f"    {key:<44} {str(value)[:60]}")
                 shown += 1
-            if not shown:
+            if not shown and read.unparsed:
+                # Same conflation as the scrubber's CLEAN short circuit: a file
+                # exiftool could not parse surfaces nothing, and printing "no
+                # metadata carriers found" is a claim about the file rather
+                # than about the reader.
+                print(_c("    exiftool could not parse this file, so it "
+                         "reported no carriers:", RED))
+                for complaint in read.parse_failures:
+                    print(_c(f"      {complaint}", RED))
+            elif not shown:
                 print(_c("    no metadata carriers found", GREY))
             print()
     finally:

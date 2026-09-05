@@ -505,6 +505,17 @@ class ScrubberWindow:
             if (key.split(":", 1)[0] if ":" in key else key)
             not in ("File", "System", "Composite", "ExifTool") and key != "SourceFile"
         )
+        if not carriers and read.unparsed:
+            # The same conflation one level up: exiftool read the file, could
+            # not parse it, and surfaced nothing. Rendering that as CLEAN is a
+            # claim about the file made from a fact about the reader.
+            base.update({
+                "status": STATUS_ERROR,
+                "error": "exiftool could not parse this file, so it reported no "
+                         "metadata carriers: " + "; ".join(read.parse_failures),
+            })
+            return base
+
         base.update({
             "status": STATUS_CLEAN if not carriers else STATUS_SANITIZED,
             "detail": (f"{len(carriers)} metadata tag(s): " + ", ".join(carriers[:6])
