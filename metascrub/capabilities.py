@@ -283,8 +283,9 @@ _AV: Dict[str, FormatSpec] = {
 # change of the same shape as the existing ZIP branch.
 _SVG_NOTE = ("XML comments, the <metadata> RDF block, editor state and "
              "editor-private sodipodi/inkscape/ooo attributes are removed; "
-             "EXIF inside base64-embedded raster images and external local "
-             "file references survive and are reported")
+             "EXIF inside base64-embedded raster images, external local "
+             "file references, and -inkscape-* CSS properties inside style "
+             "attributes survive and are reported")
 _SVG: Dict[str, FormatSpec] = {
     ".svg": FormatSpec(Engine.SVG, Completeness.PARTIAL, Container.RAW, True, _SVG_NOTE),
 }

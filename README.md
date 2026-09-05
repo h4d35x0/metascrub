@@ -496,9 +496,14 @@ to search for, and the residual byte scan finds nothing because the value is
 base64-wrapped. **The file reports `verified clean` while carrying a location.**
 It is not removed because removing it deletes the picture. The same applies to
 an `xlink:href` pointing at `file:///C:/Users/<name>/...`, which leaks a
-username. Both are reported as `NOTE:` lines in the result, and the external
-reference is named in full so you can act on it. If a drawing came out of a
-photo-tracing workflow, treat a scrubbed SVG as reduced, not clean.
+username. A third survivor is milder and was found by running the engine against
+a genuine Inkscape file rather than only the test fixture: a `style` attribute
+can carry `-inkscape-font-specification:Droid Sans Mono`, which is a CSS
+property rather than a namespaced attribute, so the attribute sweep does not see
+it. On Inkscape 0.48.3.1 output, 15 of them survived a strip that removed
+everything else. All three are reported as `NOTE:` lines in the result, and the
+external reference is named in full so you can act on it. If a drawing came out
+of a photo-tracing workflow, treat a scrubbed SVG as reduced, not clean.
 
 `tests/test_svg.py` enforces that claim rather than describing it: it decodes
 the data URI back out of the scrubbed output and asserts the EXIF sentinel is

@@ -235,6 +235,58 @@ def test_the_declared_residue_is_exactly_what_the_note_says(tmp_path):
     )
 
 
+def test_inkscape_css_properties_are_reported_not_removed(tmp_path):
+    """
+    Found by running the engine against a genuine Inkscape file rather than only
+    against the hand-authored fixture, which is why it is here.
+
+    Measured 2026-09-04 on Inkscape 0.48.3.1 output: after every inkscape:
+    attribute, the <sodipodi:namedview>, the <metadata> block and both namespace
+    declarations were removed, the string "inkscape" was STILL in the file 15
+    times. Every one was "-inkscape-font-specification:" inside a style
+    attribute. It is a CSS property, not a namespaced attribute, so the
+    attribute sweep does not see it, and it still names the editor.
+
+    It is reported rather than removed: a style attribute is the drawing, and
+    Inkscape uses that property to round-trip a font choice, so deleting it can
+    change which face the file resolves to. Removing it belongs behind an
+    explicit flag.
+    """
+    path = str(tmp_path / "styled.svg")
+    style = ("font-size:12px;font-family:Droid Sans Mono;"
+             "-inkscape-font-specification:Droid Sans Mono")
+    with open(path, "w", encoding="utf-8", newline="") as fh:
+        fh.write(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<svg xmlns="http://www.w3.org/2000/svg"\n'
+            '     xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"\n'
+            '     width="10" height="10" viewBox="0 0 10 10"\n'
+            '     inkscape:version="0.48.3.1 r9886">\n'
+            '  <text x="1" y="5" style="' + style + '">hello</text>\n'
+            '</svg>\n'
+        )
+    result = _scrub(path)
+    text = _text(path)
+
+    assert "inkscape:version" not in text, "the namespaced attribute survived"
+    assert style in text, "the style attribute was edited"
+    notes = [item for item in result["removed_fields"] if item.startswith("NOTE:")]
+    assert any("-inkscape-" in item for item in notes), (
+        "the editor is still named in the file and nothing told the user"
+    )
+
+
+def test_the_partial_note_names_every_reported_survivor(tmp_path):
+    """
+    The capability note is a promise about what remains. Every NOTE: the engine
+    can emit has to be findable in it, or the note is out of date and a user
+    reading only the table is misinformed.
+    """
+    note = spec_for("x.svg").note.lower()
+    for phrase in ("base64", "external local file reference", "-inkscape-"):
+        assert phrase in note, f"the .svg note does not mention {phrase}"
+
+
 def test_external_local_reference_is_reported_not_removed(tmp_path):
     """
     A file:/// href leaks a username. Removing it deletes the image from the

@@ -92,6 +92,15 @@ WHAT SURVIVES, WHICH IS WHY THIS FORMAT IS PARTIAL
                             Removing it deletes the image from the drawing,
                             which this tool does not do to user content.
                             Reported as a note instead.
+  -inkscape-* CSS           a style attribute can carry
+                            "-inkscape-font-specification:Droid Sans Mono",
+                            which is a CSS property rather than a namespaced
+                            attribute, so the attribute sweep does not see it.
+                            Measured on a genuine Inkscape 0.48.3.1 file: 15
+                            occurrences survived a strip that removed everything
+                            else. Reported, not removed, because a style
+                            attribute is the drawing and Inkscape uses that
+                            property to round-trip a font choice.
 
 Both are named in the capability note for .svg, and tests/test_svg.py asserts
 the residue is exactly what the note says.
@@ -157,6 +166,24 @@ _LOCAL_HREF = re.compile(
     r"""(file:[^"']*|[A-Za-z]:[\\/][^"']*|\\\\[^"']*)["']""",
     re.IGNORECASE,
 )
+
+# A vendor-prefixed CSS property inside a style attribute. Not removed; counted
+# and reported.
+#
+# Measured 2026-09-04 on a genuine Inkscape 0.48.3.1 file
+# (a genuine Inkscape file from a CTF asset set, ic.svg): after every
+# inkscape: attribute, the namedview, the metadata block and the namespace
+# declarations were gone, the string "inkscape" was still in the file 15 times,
+# every one of them "-inkscape-font-specification:" inside a style attribute.
+# It is a CSS property rather than a namespaced attribute, so the attribute
+# sweep does not see it, and it still says which editor produced the file.
+#
+# It is reported rather than removed because a style attribute is the drawing.
+# Inkscape uses this property to round-trip a font choice, and font-weight or
+# font-style are not always present beside it, so deleting it can change which
+# face the file resolves to. Reporting it is the honest outcome; the option to
+# remove it belongs behind an explicit flag. See tasks/todo.md.
+_EDITOR_CSS_PROPERTY = re.compile(r"-inkscape-[A-Za-z-]+\s*:")
 
 
 def _decode(blob: bytes) -> Tuple[str, str, bytes]:
@@ -396,6 +423,13 @@ class SvgEngine(BaseEngine):
             notes.append(
                 "NOTE: external local file reference present and NOT removed: "
                 + match.group(1)
+            )
+        editor_css = len(_EDITOR_CSS_PROPERTY.findall(text))
+        if editor_css:
+            notes.append(
+                f"NOTE: {editor_css} -inkscape-* CSS propert(ies) inside style "
+                "attributes still name the editor and are NOT removed; a style "
+                "attribute is the drawing"
             )
         return notes
 
