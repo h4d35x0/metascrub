@@ -213,6 +213,25 @@ def _ffmpeg(args) -> None:
                    check=True, capture_output=True)
 
 
+# ffmpeg picks its output muxer from the filename, and binds none to these four
+# extensions, so a fixture named with one of them cannot be written without an
+# explicit -f either. This is the same wall av_engine.py hits.
+#
+# Deliberately a SECOND, independent copy of the engine's MUXER_FOR_EXT rather
+# than an import of it. A fixture built through the engine's own map inherits
+# the engine's mistakes: point .qt at the mp4 muxer in both places and the round
+# trip passes while the tool quietly rewrites QuickTime files as MP4.
+# tests/test_av_muxer.py asserts the two maps agree, and separately asserts the
+# output's ftyp brand still matches the input's, so drift is caught without the
+# fixture depending on the thing under test.
+FIXTURE_MUXER = {".qt": "mov", ".mqv": "mov", ".lrv": "mp4", ".f4a": "mp4"}
+
+
+def _fixture_muxer_args(ext: str):
+    muxer = FIXTURE_MUXER.get((ext or "").lower())
+    return ["-f", muxer] if muxer else []
+
+
 def make_video(tmp_path, ext: str = ".mp4"):
     path = str(tmp_path / f"fixture{ext}")
     value = sentinel(ext.lstrip("."))
@@ -221,8 +240,8 @@ def make_video(tmp_path, ext: str = ".mp4"):
         "-metadata", f"title={value}",
         "-metadata", f"comment={value}",
         "-metadata", f"artist={value}",
-        "-pix_fmt", "yuv420p", path,
-    ])
+        "-pix_fmt", "yuv420p",
+    ] + _fixture_muxer_args(ext) + [path])
     assert raw_contains(path, value), f"{ext} fixture did not store the sentinel"
     return path, value
 
@@ -234,8 +253,7 @@ def make_audio(tmp_path, ext: str = ".mp3"):
         "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
         "-metadata", f"title={value}",
         "-metadata", f"artist={value}",
-        path,
-    ])
+    ] + _fixture_muxer_args(ext) + [path])
     assert raw_contains(path, value), f"{ext} fixture did not store the sentinel"
     return path, value
 
@@ -339,11 +357,11 @@ def build(kind: str, tmp_path):
         return make_pptx(tmp_path)
     if kind in (".doc", ".xls", ".ppt"):
         return make_ole2(tmp_path, kind)
-    if kind in (".mp4", ".mkv", ".mov"):
+    if kind in (".mp4", ".mkv", ".mov", ".qt", ".mqv", ".lrv"):
         if not HAVE_FFMPEG:
             pytest.skip("ffmpeg not available")
         return make_video(tmp_path, kind)
-    if kind in (".mp3", ".flac", ".m4a"):
+    if kind in (".mp3", ".flac", ".m4a", ".f4a"):
         if not HAVE_FFMPEG:
             pytest.skip("ffmpeg not available")
         return make_audio(tmp_path, kind)
@@ -367,6 +385,10 @@ ALL_KINDS = [ext for ext, _ in IMAGE_FORMATS] + [
     # a real fixture; the rest declare a proxy in
     # test_coverage_gate._COVERED_BY.
     ".ts", ".aiff",
+    # Added 2026-09-04 with the extension-to-muxer map. Each gets a real fixture
+    # rather than a declared proxy, because the thing under test IS the per
+    # extension map entry, and a wrong entry is exactly what a proxy hides.
+    ".qt", ".mqv", ".lrv", ".f4a",
 ]
 
 
