@@ -1,12 +1,44 @@
-# Metadata-Scrubber (`metascrub`)
+# metascrub
 
-Removes metadata from documents, images, audio and video, then **proves the
-removal actually happened** instead of assuming it did.
+**Your metadata scrubber is lying to you.**
 
-Built on the `ExifSanitizer` from `the parent project` (`cli/sanitizer.py`), which
-handled eight image extensions through one engine. This extends that to five
-engines across 62 extensions, and replaces "no exception was raised" with
-measured verification.
+Not metaphorically. Run the industry-standard tool on a PDF and it will report
+the file clean. The author's name is still in there. Twice. The file got
+*bigger*.
+
+metascrub strips metadata from documents, images, audio and video, and then
+proves it, by searching the output bytes for the exact values the file used to
+carry. It never asks the tool that just wrote the file whether the tool did its
+job.
+
+Seven engines, 71 extensions, 951 tests.
+
+## "I only post to social media, who cares"
+
+Good news: the big platforms do strip metadata from the photo they serve to the
+public.
+
+Bad news: they strip it from the copy *you* can see. You handed them the
+original. The GPS coordinates of your kid's school were in the upload, not in
+the download. Stripping metadata on the way out isn't privacy, it's staging.
+
+And that only covers the platforms. metascrub is for every file you send to
+someone who didn't build a data pipeline to receive it: the PDF to a client, the
+photo to a journalist, the DOCX to opposing counsel, the resume to a company
+that will absolutely notice you saved it over the last one.
+
+## How much are your files leaking?
+
+More than you think, and the worst of it hides where your own tools never look.
+Including the one you'd use to check.
+
+Every document this tool has examined from a certain office suite carried the
+name of the workstation's default printer, plus 8487 bytes of Windows printer
+driver, in a file no metadata reader reports. Not the author field. Not EXIF.
+A settings file, holding your printer's make, model and driver version, in
+every copy you ever sent anyone.
+
+Run it and find out. It'll tell you the truth, because it checks the bytes.
 
 ---
 
@@ -250,7 +282,7 @@ Two things about it are worth knowing, both measured rather than assumed:
   drop would silently add nothing.
 
 It is a view over the same `MetadataScrubber` the CLI drives, not a second
-implementation. That is deliberate: `gui/sanitizer.py` in the the parent project repo is a
+implementation. That is deliberate: `gui/sanitizer.py` in its parent project is a
 stale v1.0.0 fork of `cli/sanitizer.py`, and two copies growing format support
 independently is the failure this project already exists to undo.
 
@@ -657,7 +689,7 @@ fails and the note above has to change with it.
   and a warning raised while successfully reporting document tags cannot be
   evidence that the document was not parsed. `tests/test_unparseable.py` holds
   both populations across every shipped format.
-- **Existing backups are never overwritten.** The original the parent project code wrote
+- **Existing backups are never overwritten.** The original upstream code wrote
   `<file>.backup` unconditionally, so sanitizing the same file twice replaced
   the pristine backup with the already-sanitized copy and destroyed the only
   remaining original.
@@ -739,13 +771,23 @@ on a machine that has LibreOffice.
 
 ## Relationship to the parent project
 
-The public API is intentionally shaped like the the parent project `ExifSanitizer`
+The public API is intentionally shaped like the parent project's `ExifSanitizer`
 (`sanitize_file`, `sanitize_directory`, `restore_backup`,
 `generate_sanitization_report`, context manager, `backup` flag), and
-`ExifSanitizer` is exported here as an alias. the parent project can adopt this engine
+`ExifSanitizer` is exported here as an alias. The parent project can adopt this engine
 without rewriting its call sites.
 
 That adoption is the intended end state. Two copies of this logic growing format
-support independently is exactly the failure already visible in the the parent project repo,
+support independently is exactly the failure already visible in that parent project,
 where `gui/sanitizer.py` is a stale v1.0.0 fork of `cli/sanitizer.py`. The
 adoption is tracked outside this repository.
+
+---
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).
+
+## Contact
+
+h4d35x0@tuta.com

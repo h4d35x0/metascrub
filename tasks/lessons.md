@@ -64,7 +64,7 @@ read it.
 
 ## 2026-09-04 - A plan's "measured contents, in full" is still one machine's output
 
-`docs/plan-new-engines.md` section 1.3e gives the contents of `manifest.rdf`
+The engine plan gave the contents of `manifest.rdf`
 "in full" for the `.odt` and `.ods` fixtures, and says it is the default
 skeleton carrying nothing identifying. Measured here on 2026-09-04: true for
 `.odt`, false for `.ods`. The LibreOffice on this machine writes a 899-byte
@@ -88,7 +88,7 @@ it would have been a warning users learn to ignore.
 
 ## 2026-09-04 - A plan that measured the problem can still propose too wide a fix
 
-`docs/plan-new-engines.md` section 2.2 measured a real defect precisely: an SVG
+The engine plan measured a real defect precisely: an SVG
 with every trace of metadata removed verified as `residual_found` on the value
 of `SVG:Xmlns`, which is the namespace declaration without which the file is not
 an SVG. The measurement was right and the diagnosis was right.
@@ -124,7 +124,7 @@ something.
 
 ## 2026-09-04 - The deferral mechanism was built, and then not used
 
-`.qt`, `.mqv`, `.lrv` and `.f4a` are described as deferred in `tasks/todo.md`,
+`.qt`, `.mqv`, `.lrv` and `.f4a` were described as deferred in the docs,
 in `README.md`, and in a comment in `capabilities.py`. `DEFERRED` in
 `capabilities.py` is `{}`.
 

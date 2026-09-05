@@ -189,7 +189,7 @@ file used to name does not exist on this machine at all.
 
 ## Open work
 
-See `tasks/todo.md`. The short version: no git remote yet, the parent project adoption is the
+The short version: no git remote yet, parent-project adoption is the
 stated end state, and the `sh` launcher has never run on real macOS or Linux.
 OLE2 shipped on 2026-09-04 as PARTIAL; the Word SttbfAssoc and SttbSavedBy
 carriers are still untouched because no fixture here writes them.

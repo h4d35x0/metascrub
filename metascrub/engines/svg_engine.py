@@ -182,7 +182,7 @@ _LOCAL_HREF = re.compile(
 # Inkscape uses this property to round-trip a font choice, and font-weight or
 # font-style are not always present beside it, so deleting it can change which
 # face the file resolves to. Reporting it is the honest outcome; the option to
-# remove it belongs behind an explicit flag. See tasks/todo.md.
+# remove it belongs behind an explicit flag.
 _EDITOR_CSS_PROPERTY = re.compile(r"-inkscape-[A-Za-z-]+\s*:")
 
 

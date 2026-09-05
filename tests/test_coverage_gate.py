@@ -14,7 +14,7 @@ And one thing this suite must not do quietly either: pass because there was
 nothing to check. Three of the gates below read DEFERRED, so while that table
 is empty they run zero assertions and report green. That is not hypothetical.
 It was the real state of the project until 2026-09-04, while four AV
-containers were called deferred in README.md, in tasks/todo.md and in a
+containers were called deferred in README.md, in the backlog and in a
 comment in capabilities.py. A loop over an empty container is the quietest
 possible pass.
 

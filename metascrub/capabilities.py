@@ -265,7 +265,7 @@ _OLE2: Dict[str, FormatSpec] = {
 
 # A deferral is an obligation with a due date, and tests/test_coverage_gate.py
 # is what collects it rather than anybody's memory. Prose in the README and in
-# tasks/todo.md is NOT the mechanism: an entry that is not in this dict is
+# the README is NOT the mechanism: an entry that is not in this dict is
 # collected by nothing, because every gate that reads deferrals iterates this
 # table and a loop over an empty container is the quietest possible pass.
 # Every entry must name the measured reason and the condition that discharges
