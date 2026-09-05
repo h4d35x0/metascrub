@@ -98,7 +98,7 @@ embeds a unique sentinel and the assertion searches the bytes for it.
 ## Commands
 
 ```bash
-python -m pytest tests/ -q          # 394 passed, 5 skipped on feature/svg-engine
+python -m pytest tests/ -q          # 395 passed, 5 skipped on feature/svg-engine
 python -m metascrub selftest        # end-to-end, including a real round trip
 python -m metascrub doctor          # can the engines start
 python -m metascrub gui
