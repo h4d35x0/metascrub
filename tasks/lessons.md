@@ -4,6 +4,94 @@ Corrections and the patterns that prevent repeating them. Newest first.
 
 ---
 
+## 2026-09-05 - A test written to justify a change found the leak the change would have hidden
+
+Three platforms disagreed about a zip format, and the proposed explanation was
+that the ZIP tag group is container structure and should be ignored. Before
+making that change, a test was written for the fact the change depended on:
+that every zip entry timestamp is normalised, so the one ZIP field capable of
+carrying information is a constant afterwards.
+
+The test failed immediately, on the current shipped code.
+
+`ooxml_engine` normalised the timestamp of every member it COPIED and none of
+the members it REPLACED. Writing an entry by name stamps the current clock, so
+every scrubbed document recorded the minute it was sanitized. Reusing the source
+`ZipInfo` preserves the original, so two members kept the editing session's
+timestamp. The engine's own comment said these leak wall-clock time and must be
+normalised; two code paths went around it.
+
+So the justification for the change was false, and the change would have stopped
+anything from noticing.
+
+**Pattern:** when an exclusion rests on a claim about the code, test the claim
+before writing the exclusion, not after. The test is worth writing even if the
+change is later abandoned, because it is the claim that matters, not the change.
+This one is still here and the change is not.
+
+---
+
+## 2026-09-05 - Three wrong causes in one afternoon, every one a probe nobody checked
+
+A cross-platform failure was diagnosed three times before the diagnosis was
+right, and all three wrong answers came from the same place.
+
+1. **"It is the older exiftool."** Plausible: one platform shipped 12.76, the
+   others 13.x. Pinning 13.29 changed the failure count from 106 to 106. A
+   number that does not move when the suspected variable moves is the variable
+   being eliminated, and it should have been the end of that theory rather than
+   a detail to work around.
+2. **"It is the ZIP tag group."** The exclusion was written, and an existing
+   test caught that it introduced a FALSE CLEAN on packages missing a mimetype
+   member: with the group ignored, a file the reader could only see as a generic
+   archive looked empty and was returned untouched.
+3. **The actual cause**, one line inside a dump in a log: the reader could not
+   load the Perl module it needs to look inside a zip. It was reporting only
+   container tags and saying so in a warning, and the tool was correctly
+   refusing to claim it had verified anything.
+
+Later the same day, a release was reported to the user as still broken. It was
+not. The check installed the previous version, because the index had not
+propagated, and then two separate version readings both said the new one because
+the shell's working directory was the project root, so `sys.path[0]` is `''` and
+Python read the source tree and its egg-info instead of the installed package.
+Two independent contaminations agreeing, which is what made it convincing. That
+exact trap is written four entries below this one.
+
+**Pattern:** a cause you reasoned to is a hypothesis, and the tell that you are
+treating one as measured is that you start designing the fix. Before that, ask
+what observation would rule it OUT, and go get that observation. And a probe
+that has not been validated is not evidence: check what the harness actually
+did, not what it was meant to do.
+
+---
+
+## 2026-09-05 - The claims a project makes about its environment are also untested code
+
+Two promises in this repository were wrong, and neither could fail a test
+because neither was ever executed.
+
+`requires-python` said 3.9. Two dependencies require 3.10, so a 3.9 install
+could only fail to resolve or silently pin versions nothing here has been tested
+against. Nobody had run it, because the machine it was written on had 3.11.
+
+The launcher promised to work on POSIX systems, and had only ever run under Git
+Bash on Windows. The Windows launcher, meanwhile, preferred an interpreter
+selector that deliberately ignores virtual environments and picks the newest
+Python on the machine. In an environment with a venv active it ran a different
+interpreter, found none of the dependencies, and reported them all missing,
+which reads as a broken install rather than the wrong interpreter.
+
+All three were found within two runs of the first cross-platform CI, and none
+was reachable from a single developer machine.
+
+**Pattern:** a version floor, a supported platform and a launcher are claims of
+the same kind as "this format is handled". This project already refuses to list
+a format it has not measured. The same standard applies to the environment, and
+the only way to measure it is to run somewhere that is not your own machine.
+
+---
+
 ## 2026-09-04 - A round trip that passes can still hand back a different file
 
 The AV work was specified as an extension-to-muxer map: `-f mov` for `.qt` and

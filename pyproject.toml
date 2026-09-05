@@ -13,7 +13,15 @@ build-backend = "setuptools.build_meta"
 # The command stays `metascrub`, and `scrubproof` is installed as an alias so
 # that whichever name someone remembers, it works.
 name = "scrubproof"
-version = "1.0.1"
+# The version lives in ONE place: metascrub/__init__.py. setuptools reads it
+# from there, so the two can no longer disagree.
+#
+# It was declared in both files until 2026-09-05, and the 1.0.1 bump changed one
+# and not the other on the first attempt. A test caught that, but a test catches
+# drift after it happens; this prevents it. __init__.py is the source rather
+# than pyproject because this project is designed to run from a source tree with
+# no install at all (see bin/), where importlib.metadata has nothing to read.
+dynamic = ["version"]
 description = "Removes metadata from 71 file formats and proves it by searching the output bytes"
 readme = "README.md"
 # 3.10, not 3.9. Measured 2026-09-05 against the dependency metadata:
@@ -79,6 +87,9 @@ dev = ["pytest>=8.0", "tkinterdnd2>=0.4"]
 # window degrades to its Add Files / Add Folder buttons when it is absent.
 # requirements.txt installs it, since that file is the desktop install path.
 gui = ["tkinterdnd2>=0.4"]
+
+[tool.setuptools.dynamic]
+version = {attr = "metascrub.__version__"}
 
 [tool.setuptools.packages.find]
 include = ["metascrub*"]
