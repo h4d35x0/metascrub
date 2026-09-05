@@ -122,9 +122,42 @@ def _is_preserve_aspect_ratio(text: str) -> bool:
     return bool(_PRESERVE_ASPECT_RATIO.match(text))
 
 
+# PDF viewer preferences. /PageMode and /PageLayout are CLOSED enumerations in
+# the PDF spec (ISO 32000-1 table 28), so every value either is one of these
+# names or is not a viewer preference at all. They say how a reader should open
+# the document, not who made it: /UseOutlines is what makes a bookmarked PDF
+# open with its bookmark pane showing.
+#
+# Measured 2026-09-05, exiftool 13.29: a PDF carrying an author and bookmarks
+# came out of the pdf engine with the author GONE from the output bytes, and
+# still verified RESIDUAL_FOUND on "UseOutlines". The tool cleaned the file
+# correctly and then reported it as still leaking. 10 of the 12 values across
+# the two enums are long enough to clear _MIN_NEEDLE and do this; /UseNone and
+# /UseOC escape only by being shorter than 8 characters, which is luck, not
+# design, and is exactly why this is keyed on the enum rather than on length.
+_PAGE_MODES = frozenset({
+    "UseNone", "UseOutlines", "UseThumbs",
+    "FullScreen", "UseOC", "UseAttachments",
+})
+_PAGE_LAYOUTS = frozenset({
+    "SinglePage", "OneColumn",
+    "TwoColumnLeft", "TwoColumnRight", "TwoPageLeft", "TwoPageRight",
+})
+
+
+def _is_page_mode(text: str) -> bool:
+    return text in _PAGE_MODES
+
+
+def _is_page_layout(text: str) -> bool:
+    return text in _PAGE_LAYOUTS
+
+
 _STRUCTURAL_VALUES = {
     ("SVG", "xmlns"): _is_svg_namespace,
     ("SVG", "preserveaspectratio"): _is_preserve_aspect_ratio,
+    ("PDF", "pagemode"): _is_page_mode,
+    ("PDF", "pagelayout"): _is_page_layout,
 }
 
 # A needle shorter than this produces false positives against binary payloads.
