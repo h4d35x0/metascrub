@@ -61,11 +61,18 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ffmpeg file xvfb
-          curl -fsSL "https://exiftool.org/Image-ExifTool-${EXIFTOOL_VERSION}.tar.gz" -o exiftool.tar.gz
+          # From the GitHub tag archive, NOT exiftool.org. exiftool.org serves
+          # only the CURRENT release at that path, so a pinned version 404s
+          # there the moment upstream ships a new one; measured 2026-09-05,
+          # when 13.29 had already been replaced by 13.59.
+          curl -fsSL "https://github.com/exiftool/exiftool/archive/refs/tags/${EXIFTOOL_VERSION}.tar.gz" -o exiftool.tar.gz
           tar xzf exiftool.tar.gz
-          sudo cp -r "Image-ExifTool-${EXIFTOOL_VERSION}/exiftool" "Image-ExifTool-${EXIFTOOL_VERSION}/lib" /usr/local/bin/
-          rm -rf exiftool.tar.gz "Image-ExifTool-${EXIFTOOL_VERSION}"
-          exiftool -ver
+          sudo cp -r "exiftool-${EXIFTOOL_VERSION}/exiftool" "exiftool-${EXIFTOOL_VERSION}/lib" /usr/local/bin/
+          rm -rf exiftool.tar.gz "exiftool-${EXIFTOOL_VERSION}"
+          # Assert the version actually on PATH is the one we pinned, rather
+          # than trusting the install and finding out 106 tests later.
+          echo "exiftool on PATH: $(exiftool -ver)"
+          test "$(exiftool -ver)" = "${EXIFTOOL_VERSION}"
 
       - name: Install exiftool and ffmpeg (macOS)
         if: runner.os == 'macOS'
