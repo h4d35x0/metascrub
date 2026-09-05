@@ -13,7 +13,7 @@ build-backend = "setuptools.build_meta"
 # The command stays `metascrub`, and `scrubproof` is installed as an alias so
 # that whichever name someone remembers, it works.
 name = "scrubproof"
-version = "1.0.0"
+version = "1.0.1"
 description = "Removes metadata from 71 file formats and proves it by searching the output bytes"
 readme = "README.md"
 # 3.10, not 3.9. Measured 2026-09-05 against the dependency metadata:
