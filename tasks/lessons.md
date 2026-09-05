@@ -310,6 +310,59 @@ to hold it.
 
 ---
 
+## 2026-09-04 - The same conflation came back one level up, wearing the successful read's clothes
+
+`MetadataRead` split "could not read" from "carries nothing" and the lesson
+above says the pattern is to fix the type. It was fixed, and the identical bug
+was still live three lines later, because there were never two states. There
+were three:
+
+    read failed          ok=False, empty
+    read succeeded, document parsed, nothing there
+    read succeeded, document NOT parsed, nothing reported   <-- this one
+
+The third looked exactly like the second to every caller. exiftool identifies a
+truncated `.svg`, exits zero, and says in a Warning that it could not parse it;
+`_real_tags()` is empty either way, and the scrubber reported CLEAN over a live
+`sodipodi:docname`.
+
+**Pattern:** splitting a type into two states is not evidence that two is the
+right number. After separating "failed" from "empty", ask what else can produce
+an empty result, and keep asking until the answers stop. The tell is that the
+new type's docstring can be read as a claim ("a successful read of an empty file
+means the file is empty") that nothing verifies.
+
+---
+
+## 2026-09-04 - The obvious fix was wrong, and only the corpus could say so
+
+The naive predicate here was "if the read carries an ExifTool warning, do not
+report CLEAN". It reads as conservative and safe. Measured against the fixture
+corpus it fails on four shipped formats: a perfectly good `.ott` carries
+`Unrecognized MIMEType application/vnd.oasis.opendocument.text-template` AND
+reports zero document tags once scrubbed, so it lands in the exact shape of the
+defect. Shipping the obvious fix would have made the tool refuse four formats it
+cleans correctly.
+
+Nothing about the warning's wording says it is benign. What says so is that
+exiftool emits it on reads that ALSO return the document's Title and Creator. A
+warning raised while successfully reporting document tags cannot be evidence
+that the document was not parsed. That rule is enforced against a real file, not
+written in a comment.
+
+**Pattern:** when a predicate has to separate two classes, do not design it from
+the class you are hunting. Collect the class you must NOT break first, from real
+inputs, and find the one that sits closest to the boundary. That example is the
+design, and it is almost never the one that motivated the work.
+
+Corollary, on direction: this predicate is an ALLOWLIST of benign warnings, not
+a denylist of alarming ones. An unrecognised warning costs a refusal on a file
+that may have been fine; the other direction costs a false CLEAN on a file that
+is not. When a classifier must be wrong sometimes, choose which way before
+choosing how.
+
+---
+
 ## 2026-09-04 - Three times, a bad test was mistaken for a bad product
 
 Each of these looked like a defect and was not:

@@ -631,6 +631,32 @@ fails and the note above has to change with it.
   unreadable baseline fails the file, and `tests/test_failopen.py` asserts over
   the whole format cross-product that nothing reports clean when metadata cannot
   be read.
+- **A file exiftool could not PARSE is an error too, and it is a different
+  state from both of those.** Found by audit 2026-09-04, one level up from the
+  fail-open above and wearing the successful read's clothes. Measured with
+  exiftool 13.29 on a truncated `.svg` carrying `sodipodi:docname`: exiftool
+  reports `FileType: SVG`, exits zero, emits `XMP format error (no closing tag
+  for svg)`, and surfaces no SVG tags at all. The read SUCCEEDS, so `ok` is
+  true; everything it emits sits in the `File` and `ExifTool` pseudo-groups, so
+  the scrubber saw an empty document and reported "no metadata carriers found"
+  about a file carrying an editor's docname.
+  `ExifSession.read()` now returns `ReadOutcome.PARSED`, `UNPARSED` or `FAILED`,
+  and an unparseable baseline is refused for the same reason an unreadable one
+  is: it gives the residual scan no needles, so nothing an engine did afterwards
+  could be verified. No engine runs, no backup is written, no byte moves, and
+  the run exits non-zero.
+  The predicate is an allowlist of warnings measured to occur on files that are
+  FINE, not a denylist of warnings that look alarming. Over the whole fixture
+  corpus, 31 formats read before and after scrubbing, exactly one family
+  appeared on a good file: `Unrecognized MIMEType
+  application/vnd.oasis.opendocument.*-template` on `.ott`, `.ots`, `.otp` and
+  `.otg`. Those four decide the design, because a scrubbed ODF template reports
+  zero document tags and so lands in the exact shape of the defect while being a
+  file that must stay CLEAN. What makes that family benign is not its wording:
+  exiftool emits it on reads that also return the document's Title and Creator,
+  and a warning raised while successfully reporting document tags cannot be
+  evidence that the document was not parsed. `tests/test_unparseable.py` holds
+  both populations across every shipped format.
 - **Existing backups are never overwritten.** The original the parent project code wrote
   `<file>.backup` unconditionally, so sanitizing the same file twice replaced
   the pristine backup with the already-sanitized copy and destroyed the only
