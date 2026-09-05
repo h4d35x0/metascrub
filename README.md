@@ -106,6 +106,17 @@ should be read as exactly that claim and no wider.
 ## Install
 
 ```bash
+pip install scrubproof
+```
+
+**The PyPI name is `scrubproof`, not `metascrub`.** Both `metascrub` and
+`metadata-scrubber` were already taken on PyPI by unrelated image-only tools, so
+`pip install metascrub` installs **someone else's package**, not this one. The
+command is still `metascrub` once installed, and `scrubproof` works as an alias.
+
+From a clone instead:
+
+```bash
 pip install -e ".[gui]"          # installs the `metascrub` and `metascrub-gui` commands
 ```
 

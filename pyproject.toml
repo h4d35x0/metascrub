@@ -3,10 +3,41 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "metascrub"
+# DISTRIBUTION NAME vs COMMAND NAME.
+#
+# The PyPI name is "scrubproof" because "metascrub" and "metadata-scrubber" are
+# both already taken on PyPI, by unrelated image-only tools. That is a hazard
+# worth stating: `pip install metascrub` installs SOMEONE ELSE'S package, not
+# this one. The README says so too.
+#
+# The command stays `metascrub`, and `scrubproof` is installed as an alias so
+# that whichever name someone remembers, it works.
+name = "scrubproof"
 version = "1.0.0"
-description = "Remove metadata from documents, images, audio and video, and verify the removal"
+description = "Removes metadata from 71 file formats and proves it by searching the output bytes"
+readme = "README.md"
 requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+keywords = [
+    "metadata", "privacy", "exif", "metadata-removal", "opsec",
+    "pdf", "docx", "odf", "sanitize", "redaction", "anonymity",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Utilities",
+]
 dependencies = [
     "pyexiftool>=0.5.6",
     "Pillow>=10.0",
@@ -20,8 +51,16 @@ dependencies = [
     "olefile>=0.47",
 ]
 
+[project.urls]
+Homepage = "https://github.com/h4d35x0/metascrub"
+Repository = "https://github.com/h4d35x0/metascrub"
+Issues = "https://github.com/h4d35x0/metascrub/issues"
+
 [project.scripts]
 metascrub = "metascrub.cli:main"
+# Alias, so `pip install scrubproof` gives a command matching the name people
+# saw on PyPI. Both entry points run the same CLI.
+scrubproof = "metascrub.cli:main"
 
 # GUI entry point. Listed under gui-scripts rather than scripts so that on
 # Windows it is launched by pythonw.exe and does not open a console window
