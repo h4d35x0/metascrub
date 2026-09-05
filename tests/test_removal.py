@@ -72,7 +72,7 @@ def test_file_still_opens_after_sanitizing(kind, tmp_path):
     unreadable documents will not be used, and a tool nobody uses protects
     nobody.
     """
-    path, _ = build(kind, tmp_path)
+    path, value = build(kind, tmp_path)
     before_size = os.path.getsize(path)
 
     with MetadataScrubber(backup=False) as scrubber:
@@ -99,6 +99,25 @@ def test_file_still_opens_after_sanitizing(kind, tmp_path):
     elif kind == ".pptx":
         import pptx
         assert len(pptx.Presentation(path).slides) == 1
+    elif kind in (".odt", ".ott", ".ods", ".ots", ".odp", ".otp", ".odg", ".otg"):
+        # The package has to still BE an OpenDocument, not merely a readable
+        # zip. mimetype first and STORED is what content sniffers key on, and it
+        # is the one property a naive rebuild silently loses; see
+        # tests/test_odf.py. The body sentinel proves the document survived, not
+        # just the container.
+        import zipfile as _zipfile
+
+        from conftest import build_odf as _build_odf
+
+        with _zipfile.ZipFile(path) as package:
+            first = package.infolist()[0]
+            assert first.filename == "mimetype"
+            assert first.compress_type == _zipfile.ZIP_STORED
+            assert package.read("mimetype").decode() == _build_odf.MIMETYPES[kind]
+            body = _build_odf.sentinels(value)["body"]
+            assert body.encode("utf-8") in package.read("content.xml"), (
+                f"{kind}: the document body did not survive"
+            )
     elif kind in (".mp4", ".mkv", ".mp3", ".flac"):
         import subprocess
         probe = subprocess.run(

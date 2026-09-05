@@ -25,6 +25,7 @@ class Engine(str, Enum):
     EXIFTOOL = "exiftool"   # exiftool -all=, in-place, safe for these containers
     PDF = "pdf"             # pikepdf full rewrite; exiftool is NOT safe here
     OOXML = "ooxml"         # zip container rewrite (docx/xlsx/pptx)
+    ODF = "odf"             # zip container rewrite (odt/ods/odp/odg + templates)
     OLE2 = "ole2"           # legacy compound-file property streams
     AV = "av"               # ffmpeg remux, stream copy
 
@@ -169,6 +170,51 @@ _OOXML: Dict[str, FormatSpec] = {
     for ext in (".docx", ".docm", ".xlsx", ".xlsm", ".pptx", ".pptm")
 }
 
+# ---------------------------------------------------------------------------
+# ODF BLOCK BEGINS. Kept together so it can be moved or merged in one piece.
+# ---------------------------------------------------------------------------
+#
+# TIER 3B: OpenDocument. Also a zip container, but NOT the OOXML engine.
+#
+# exiftool reads every one of these and writes none of them. Measured 2026-09-04
+# with exiftool 13.29 on LibreOffice-produced files:
+#   .odt/.ods/.odp/.odg  "Writing of ODT files is not yet supported", exit 1
+#   .ott                 "Writing of this type of file is not supported", exit 1
+# (.ott differs because exiftool identifies it as FileType ZIP; it still reads
+# the metadata, which is all the baseline read needs.)
+#
+# COMPLETE, and the note says what that covers. The claim rests on measurement,
+# not on the engine reporting success: for every extension below a fixture
+# seeded a sentinel into meta.xml, settings.xml and the package RDF, and
+# tests/test_odf.py searches the INFLATED output members for each sentinel
+# afterwards, including the base64 spelling of the printer blob.
+#
+# settings.xml is the carrier that justifies a dedicated engine. Measured on a
+# LibreOffice .odt built on this machine: PrinterName held the workstation's
+# default printer name and PrinterSetup held 11316 base64 characters decoding to
+# 8487 bytes of Windows DEVMODE carrying that printer name twice in ASCII, once
+# in UTF-16LE, and the driver string "<printer model redacted>". Nothing else in
+# this tool looks at settings.xml, and exiftool does not report it at all.
+#
+# Formats deliberately NOT added, with the measured reason:
+#   .fodt .fods .fodp  flat XML ODF, a single uncompressed XML file rather than
+#       a package. Measured: exiftool sees .fodt as FileType XML, reads Title
+#       and Creator, and refuses to write it with "[minor] Can't handle XMP
+#       attribute 'office:mimetype'". They need a Container.RAW engine that
+#       edits XML in place, which is a different engine and not a table row.
+#       Recorded in DEFERRED below rather than left silent.
+_ODF_NOTE = ("meta.xml replaced with an empty skeleton; printer name and "
+             "printer driver blob, revision-save identifiers, thumbnails and "
+             "package RDF removed; annotations and tracked changes are "
+             "reported, not removed")
+_ODF: Dict[str, FormatSpec] = {
+    ext: FormatSpec(Engine.ODF, Completeness.COMPLETE, Container.ZIP, True, _ODF_NOTE)
+    for ext in (".odt", ".ott", ".ods", ".ots", ".odp", ".otp", ".odg", ".otg")
+}
+# ---------------------------------------------------------------------------
+# ODF BLOCK ENDS.
+# ---------------------------------------------------------------------------
+
 # TIER 4: legacy OLE2 compound files. Deferred until 2026-09-04, now shipped.
 #
 # .doc, .xls and .ppt keep their metadata in the \005SummaryInformation and
@@ -221,22 +267,42 @@ _OLE2: Dict[str, FormatSpec] = {
 # tasks/todo.md is NOT the mechanism: an entry that is not in this dict is
 # collected by nothing, because every gate that reads deferrals iterates this
 # table and a loop over an empty container is the quietest possible pass.
+# Every entry must name the measured reason and the condition that discharges
+# it.
 #
-# Measured 2026-09-04 on ffmpeg 2024-12-11-git-a518b5540d: writing to a path
-# ending in any of these four extensions with no explicit -f fails with
-# "Unable to choose an output format" / "Error opening output files: Invalid
-# argument". av_engine.py names its temp file with the target extension and
-# lets ffmpeg infer the muxer, so these cannot round trip through it yet.
-# Nothing is deferred at the moment. `.qt`, `.mqv`, `.lrv` and `.f4a` were,
-# until av_engine.MUXER_FOR_EXT shipped on 2026-09-04 and each of the four
+# `.qt`, `.mqv`, `.lrv` and `.f4a` were deferred here until the
+# flavour-preserving muxer selection shipped on 2026-09-04 and each of the four
 # passed the sentinel byte search; they are in the AV tier below now.
 #
-# The gates in tests/test_coverage_gate.py do NOT lose their teeth while this
-# is empty. They are written as functions over a table and are exercised
-# against synthetic tables, so the mechanism is proven whether or not anything
-# is deferred today. That was the 2026-09-04 audit finding: an empty table used
-# to make three gates pass having asserted nothing at all.
-DEFERRED: Dict[str, str] = {}
+# The gates in tests/test_coverage_gate.py do NOT lose their teeth when this
+# table happens to be empty. They are written as functions over a table and are
+# exercised against synthetic tables, so the mechanism is proven whether or not
+# anything is deferred today. That was the 2026-09-04 audit finding: an empty
+# table used to make three gates pass having asserted nothing at all.
+DEFERRED: Dict[str, str] = {
+    # --- ODF BLOCK BEGINS ---
+    # Flat XML ODF: one uncompressed XML file rather than a zip package, so the
+    # ODF engine's whole strategy (rebuild the package, hoist mimetype, replace
+    # meta.xml) does not apply. Measured 2026-09-04 with exiftool 13.29: a
+    # .fodt reports FileType XML, reads Title and Creator correctly, and
+    # refuses to write with "[minor] Can't handle XMP attribute
+    # 'office:mimetype'". Discharge condition: a Container.RAW engine that
+    # edits the office:document XML in place, plus a fixture per extension and
+    # a tests/test_flat_odf.py that searches the output bytes.
+    ".fodt": ("flat XML OpenDocument, not a zip package; exiftool reads it as "
+              "XML and refuses to write it. Needs a raw-XML engine, not a "
+              "table row. Discharged by a Container.RAW engine plus fixtures "
+              "and tests/test_flat_odf.py"),
+    ".fods": ("flat XML OpenDocument, not a zip package; exiftool reads it as "
+              "XML and refuses to write it. Needs a raw-XML engine, not a "
+              "table row. Discharged by a Container.RAW engine plus fixtures "
+              "and tests/test_flat_odf.py"),
+    ".fodp": ("flat XML OpenDocument, not a zip package; exiftool reads it as "
+              "XML and refuses to write it. Needs a raw-XML engine, not a "
+              "table row. Discharged by a Container.RAW engine plus fixtures "
+              "and tests/test_flat_odf.py"),
+    # --- ODF BLOCK ENDS ---
+}
 
 # TIER 5: audio and video. ffmpeg remux, not exiftool.
 _AV_NOTE = "container, per-stream and chapter metadata; remux without re-encoding"
@@ -271,7 +337,7 @@ _AV: Dict[str, FormatSpec] = {
 }
 
 CAPABILITIES: Dict[str, FormatSpec] = {}
-for _table in (_IMAGE, _PDF, _OOXML, _OLE2, _AV):
+for _table in (_IMAGE, _PDF, _OOXML, _ODF, _OLE2, _AV):
     CAPABILITIES.update(_table)
 
 

@@ -154,6 +154,31 @@ def test_ole2_cannot_ship_without_its_fixtures_and_tests():
     )
 
 
+def test_odf_cannot_ship_without_its_fixtures_and_tests():
+    """
+    The same enforcement the OLE2 row gets, for the same reason.
+
+    The extensions are named literally rather than read out of DEFERRED. That is
+    the whole lesson of 2026-09-04: three gates iterated an empty DEFERRED and
+    reported green while running zero assertions. A gate that names its subject
+    has teeth whatever the tables say.
+    """
+    odf_exts = {".odt", ".ott", ".ods", ".ots", ".odp", ".otp", ".odg", ".otg"}
+    shipped = odf_exts & set(CAPABILITIES)
+    if not shipped:
+        pytest.skip("ODF not shipped; nothing to enforce yet")
+
+    fixtures = os.path.join(_TESTS_DIR, "fixtures", "odf")
+    test_module = os.path.join(_TESTS_DIR, "test_odf.py")
+    assert os.path.isdir(fixtures), (
+        f"{sorted(shipped)} shipped without tests/fixtures/odf/"
+    )
+    assert os.listdir(fixtures), "tests/fixtures/odf/ is empty"
+    assert os.path.isfile(test_module), (
+        f"{sorted(shipped)} shipped without tests/test_odf.py"
+    )
+
+
 def test_deferrals_are_documented_in_the_readme():
     """
     A deferral nobody can find is a deferral nobody will discharge. The README
