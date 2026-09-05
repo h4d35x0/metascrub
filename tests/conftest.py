@@ -284,6 +284,8 @@ def make_odf_from_libreoffice(tmp_path, ext: str):
     path = str(tmp_path / f"lofixture{ext}")
     shutil.copyfile(_ODF_LO_CACHE[ext], path)
     assert zip_contains(path, value), f"{ext} LibreOffice fixture lost the sentinel"
+    return path, value
+
 
 # SVG
 #
