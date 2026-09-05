@@ -814,6 +814,11 @@ adoption is tracked outside this repository.
 
 ---
 
+## Changes
+
+See [CHANGELOG.md](CHANGELOG.md). If you are working from a clone, that is the
+only place the release notes are visible.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
