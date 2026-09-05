@@ -60,7 +60,14 @@ jobs:
           EXIFTOOL_VERSION: '13.29'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg file xvfb
+          # libarchive-zip-perl is REQUIRED, not optional. Without Archive::Zip
+          # exiftool cannot look inside a zip-backed document: it reports only
+          # generic ZIP:* container tags and warns "Install Archive::Zip to
+          # decode compressed ZIP information". metascrub then correctly refuses
+          # to claim it verified the file, so every docx, xlsx, pptx and ODF
+          # extension fails. Measured in CI 2026-09-05: 106 of 951 tests, on
+          # Linux only. Windows and macOS builds of exiftool bundle it.
+          sudo apt-get install -y --no-install-recommends             ffmpeg file xvfb libarchive-zip-perl
           # From the GitHub tag archive, NOT exiftool.org. exiftool.org serves
           # only the CURRENT release at that path, so a pinned version 404s
           # there the moment upstream ships a new one; measured 2026-09-05,

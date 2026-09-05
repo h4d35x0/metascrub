@@ -220,6 +220,15 @@ Also needs two binaries on PATH:
 | `exiftool` | **reading metadata for every format**, and writing images | `exiftool -ver` | `winget install OliverBetz.ExifTool` |
 | `ffmpeg` | audio and video | `ffmpeg -version` | `winget install Gyan.FFmpeg` |
 
+**On Linux, exiftool also needs `Archive::Zip`.** Install
+`libarchive-zip-perl` (Debian, Ubuntu) or `perl-Archive-Zip` (Fedora, Arch).
+Without it exiftool cannot read inside a zip-backed document at all: it reports
+only generic `ZIP:*` container tags and warns *"Install Archive::Zip to decode
+compressed ZIP information"*. metascrub then refuses to claim it verified the
+file, which is correct but looks like a bug. Measured 2026-09-05: every `.docx`,
+`.xlsx`, `.pptx` and OpenDocument extension fails without it. The Windows and
+macOS builds of exiftool bundle it, so this bites Linux only.
+
 **exiftool 13.x or newer.** Measured 2026-09-05: exiftool **12.76**, which is
 what Ubuntu 24.04 ships in `libimage-exiftool-perl`, reports `ZIP:*` container
 tags for zip-based formats that 13.x does not, and 106 tests fail on it. The

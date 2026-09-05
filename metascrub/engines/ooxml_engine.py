@@ -108,15 +108,27 @@ class OoxmlEngine(BaseEngine):
                         if name in _DROP:
                             targeted.append(name)
                             continue
+                        # EVERY member goes through _normalised(), the replaced
+                        # ones included. Until 2026-09-05 they did not, and that
+                        # leaked two different times. `writestr(name, ...)` with
+                        # a string stamps the CURRENT clock, so every scrubbed
+                        # file recorded the minute it was sanitized; and
+                        # `writestr(item, ...)` reused the source ZipInfo, so
+                        # [Content_Types].xml and _rels/.rels kept the ORIGINAL
+                        # editing session's timestamp, which is precisely what
+                        # the normalisation exists to remove. Found by a test
+                        # written to justify treating the ZIP group as
+                        # structural; without this fix that would have hidden a
+                        # live leak instead of ignoring a constant.
                         if name in _REPLACE:
-                            dst.writestr(name, _REPLACE[name])
+                            dst.writestr(self._normalised(item), _REPLACE[name])
                             targeted.append(name)
                             continue
                         if name == "[Content_Types].xml" and content_types is not None:
-                            dst.writestr(item, content_types)
+                            dst.writestr(self._normalised(item), content_types)
                             continue
                         if name == "_rels/.rels" and root_rels is not None:
-                            dst.writestr(item, root_rels)
+                            dst.writestr(self._normalised(item), root_rels)
                             continue
 
                         data = src.read(name)
@@ -125,13 +137,7 @@ class OoxmlEngine(BaseEngine):
                             if changed:
                                 targeted.append(f"{name} (revision identifiers)")
                             data = cleaned
-                        # Zip entries carry their own modification timestamps.
-                        # They are metadata too, and they leak the editing
-                        # session's wall-clock time, so normalise them.
-                        info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
-                        info.compress_type = zipfile.ZIP_DEFLATED
-                        info.external_attr = item.external_attr
-                        dst.writestr(info, data)
+                        dst.writestr(self._normalised(item), data)
 
                 notes = self._content_notes(names)
         except EngineError:
@@ -147,6 +153,21 @@ class OoxmlEngine(BaseEngine):
         atomic_replace(tmp, path)
         targeted.extend(notes)
         return targeted or ["ooxml package rebuild"]
+
+    @staticmethod
+    def _normalised(item: zipfile.ZipInfo) -> zipfile.ZipInfo:
+        """
+        A ZipInfo for `item` with its timestamp pinned to the zip epoch.
+
+        Zip entries carry their own modification timestamps, and those are
+        metadata: kept from the source they leak the editing session's
+        wall-clock time, and written fresh at rebuild time they leak the
+        sanitizing time instead. Both are removed by pinning every entry.
+        """
+        info = zipfile.ZipInfo(item.filename, date_time=(1980, 1, 1, 0, 0, 0))
+        info.compress_type = zipfile.ZIP_DEFLATED
+        info.external_attr = item.external_attr
+        return info
 
     def _strip_rsids(self, data: bytes) -> Tuple[bytes, bool]:
         original = data
