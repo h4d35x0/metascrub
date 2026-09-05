@@ -1,5 +1,8 @@
 # metascrub
 
+[![tests](https://github.com/h4d35x0/metascrub/actions/workflows/tests.yml/badge.svg)](https://github.com/h4d35x0/metascrub/actions/workflows/tests.yml)
+[![PyPI](https://img.shields.io/pypi/v/scrubproof)](https://pypi.org/project/scrubproof/)
+
 **Your metadata scrubber is lying to you.**
 
 Not metaphorically. Run the industry-standard tool on a PDF and it will report

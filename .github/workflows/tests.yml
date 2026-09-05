@@ -1,0 +1,156 @@
+name: tests
+
+# Runs the suite on the three platforms the README promises, and verifies the
+# POSIX launcher, which before this workflow existed had NEVER run outside Git
+# Bash on Windows despite the README telling macOS and Linux users to run it.
+# That was the one place the project asserted something it had not measured.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The three platforms the README promises.
+          - { os: ubuntu-latest,  python: '3.11', libreoffice: true }
+          - { os: macos-latest,   python: '3.11', libreoffice: false }
+          - { os: windows-latest, python: '3.11', libreoffice: false }
+          # The declared support range. pyproject says requires-python >=3.10,
+          # and that floor is now tested rather than asserted: it was ">=3.9"
+          # until 2026-09-05, when the dependency metadata showed pikepdf and
+          # Pillow both require >=3.10. Claiming a floor without testing it is
+          # the same defect as claiming a format works without measuring it.
+          - { os: ubuntu-latest,  python: '3.10', libreoffice: false }
+          - { os: ubuntu-latest,  python: '3.13', libreoffice: false }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      # --- exiftool is REQUIRED for every format, not just images. Without it
+      # --- the tool refuses to run and the suite fails at fixture construction.
+      - name: Install exiftool and ffmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libimage-exiftool-perl ffmpeg file xvfb
+
+      - name: Install exiftool and ffmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install exiftool ffmpeg
+
+      - name: Install exiftool and ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: choco install exiftool ffmpeg --no-progress -y
+
+      # LibreOffice builds the genuine compound files the OLE2 fixtures need.
+      # Without it .doc/.xls/.ppt skip entirely, so it runs on one runner rather
+      # than none. ODF does NOT need it: those fixtures are stdlib-built and the
+      # LibreOffice route is only the control.
+      - name: Install LibreOffice
+        if: matrix.libreoffice
+        run: sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-calc libreoffice-impress
+
+      - name: Install the package and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[gui,dev]"
+
+      - name: Show what the engines can actually do here
+        run: python -m metascrub doctor
+
+      # -rs prints every skip reason. Skips are the load-bearing number in this
+      # project: a skip is exactly where a test has quietly stopped asserting,
+      # and a pass count without them is an environment fact, not a gate.
+      - name: Run the suite (Linux, under a virtual display)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a python -m pytest tests/ -q -rs
+
+      - name: Run the suite
+        if: runner.os != 'Linux'
+        run: python -m pytest tests/ -q -rs
+
+      # --- The reason this workflow exists. ---------------------------------
+      - name: Verify the POSIX launcher (macOS, Linux)
+        if: runner.os != 'Windows'
+        run: |
+          test -x bin/metascrub || chmod +x bin/metascrub
+          ./bin/metascrub selftest
+
+      - name: Verify the Windows launcher
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: bin\metascrub.cmd selftest
+
+      # A round trip run as a user, outside the harness. Three defects on this
+      # project were found this way and none of them by the suite.
+      - name: Scrub a real file and search the output bytes
+        shell: bash
+        run: |
+          python - <<'PY'
+          import pikepdf
+          pdf = pikepdf.Pdf.new()
+          pdf.add_blank_page(page_size=(200, 200))
+          pdf.docinfo["/Author"] = "CI_SENTINEL_8842"
+          pdf.save("ci.pdf")
+          assert b"CI_SENTINEL_8842" in open("ci.pdf", "rb").read(), "fixture did not store it"
+          PY
+          python -m metascrub scrub ci.pdf
+          python - <<'PY'
+          data = open("ci.pdf", "rb").read()
+          n = data.count(b"CI_SENTINEL_8842")
+          print("sentinel occurrences in the output bytes:", n)
+          assert n == 0, "the value survived the scrub"
+          PY
+
+  build:
+    name: build and check the distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install --upgrade pip build twine
+      - run: python -m build
+      - run: python -m twine check dist/*
+      # The published package must never carry author metadata: this ships
+      # under a persona, and PyPI publishes those fields.
+      - name: Assert the distribution carries no author metadata
+        run: |
+          python - <<'PY'
+          import pathlib, zipfile, sys
+          whl = next(pathlib.Path("dist").glob("*.whl"))
+          with zipfile.ZipFile(whl) as z:
+              meta = next(n for n in z.namelist() if n.endswith("METADATA"))
+              text = z.read(meta).decode("utf-8", "ignore")
+          bad = [l for l in text.splitlines()
+                 if l.startswith(("Author:", "Author-email:", "Maintainer:", "Maintainer-email:"))]
+          print("\n".join(text.splitlines()[:12]))
+          assert not bad, "distribution carries author metadata: %r" % bad
+          print("OK: no author or maintainer fields")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
