@@ -9,11 +9,27 @@ Two things this suite must not allow to happen quietly:
   2. A deferred format gets shipped without the fixture and test that were the
      stated condition for shipping it. A deferral is an obligation with a due
      date, and something other than memory has to collect it.
+
+And one thing this suite must not do quietly either: pass because there was
+nothing to check. Three of the gates below read DEFERRED, so while that table
+is empty they run zero assertions and report green. That is not hypothetical.
+It was the real state of the project until 2026-09-04, while four AV
+containers were called deferred in README.md, in tasks/todo.md and in a
+comment in capabilities.py. A loop over an empty container is the quietest
+possible pass.
+
+The fix is structural rather than a promise to remember. Each deferral rule is
+a pure function of the tables it judges and RETURNS the violations it finds
+instead of asserting. The public tests point those functions at the real
+tables; test_the_deferral_gates_have_teeth points the same functions at
+synthetic tables that are known to be in violation. So the logic is proven to
+fail when it should, whether or not DEFERRED happens to hold anything today.
 """
 
 from __future__ import annotations
 
 import os
+import re
 
 import pytest
 
@@ -66,15 +82,51 @@ def test_every_supported_format_is_tested_or_explicitly_covered():
     assert not gaps, "untested formats in the capability table: " + "; ".join(gaps)
 
 
+# THE DEFERRAL RULES, AS FUNCTIONS
+#
+# Each takes the tables to judge and returns the violations it found rather
+# than asserting. That is what lets the same code be aimed at the real tables
+# by the public tests below AND at a synthetic table known to be in violation,
+# which is the only way to show the rule can still fail.
+
+# A "reason" shorter than this is a label, not a reason. Named so that the
+# synthetic test and the real test cannot drift apart.
+MIN_REASON_CHARS = 20
+
+
+def shipped_and_deferred(capabilities, deferred):
+    """Extensions claimed as supported and deferred at the same time."""
+    return sorted(set(capabilities) & set(deferred))
+
+
+def deferrals_without_a_reason(deferred):
+    """Extensions deferred with no reason, or one too short to be one."""
+    return sorted(ext for ext, reason in deferred.items()
+                  if not reason or len(reason) <= MIN_REASON_CHARS)
+
+
+def deferrals_missing_from_the_readme(deferred, readme_text):
+    """Extensions deferred but named nowhere in the README."""
+    lowered = readme_text.lower()
+    return sorted(ext for ext in deferred if ext.lower() not in lowered)
+
+
+def _read_readme():
+    readme = os.path.join(_PROJECT_DIR, "README.md")
+    assert os.path.isfile(readme), "README.md is missing"
+    with open(readme, encoding="utf-8") as fh:
+        return fh.read()
+
+
 def test_no_extension_is_both_supported_and_deferred():
     """A format cannot be shipped and deferred at the same time."""
-    overlap = set(CAPABILITIES) & set(DEFERRED)
-    assert not overlap, f"extensions in both tables: {sorted(overlap)}"
+    overlap = shipped_and_deferred(CAPABILITIES, DEFERRED)
+    assert not overlap, f"extensions in both tables: {overlap}"
 
 
 def test_every_deferral_states_a_reason():
-    for ext, reason in DEFERRED.items():
-        assert reason and len(reason) > 20, f"{ext} is deferred without a real reason"
+    bad = deferrals_without_a_reason(DEFERRED)
+    assert not bad, f"deferred without a real reason: {bad}"
 
 
 def test_ole2_cannot_ship_without_its_fixtures_and_tests():
@@ -107,12 +159,96 @@ def test_deferrals_are_documented_in_the_readme():
     A deferral nobody can find is a deferral nobody will discharge. The README
     is where a user looks to learn what this tool does not do.
     """
-    readme = os.path.join(_PROJECT_DIR, "README.md")
-    assert os.path.isfile(readme), "README.md is missing"
-    with open(readme, encoding="utf-8") as fh:
-        text = fh.read().lower()
-    for ext in DEFERRED:
-        assert ext in text, f"deferred format {ext} is not mentioned in README.md"
+    missing = deferrals_missing_from_the_readme(DEFERRED, _read_readme())
+    assert not missing, f"deferred but not mentioned in README.md: {missing}"
+
+
+# A table that breaks all three rules at once. Its extensions are deliberately
+# unreal, so this can never accidentally agree with the world.
+_BAD_DEFERRED = {
+    ".metascrubshipped": "a reason easily long enough to count as one",
+    ".metascrubterse": "too short",
+    ".metascrubempty": "",
+}
+_BAD_CAPABILITIES = {".metascrubshipped": "a spec object stands in here"}
+_GOOD_DEFERRED = {".metascrubfine": "a measured reason of more than twenty chars"}
+
+
+def test_the_deferral_gates_have_teeth():
+    """
+    Prove the three deferral rules can still FAIL.
+
+    They read DEFERRED, so an empty DEFERRED makes all three pass having
+    asserted nothing. A gate that cannot fail is not a gate, and its greenness
+    carries no information. Exercising the rules against a synthetic table
+    instead of against whatever the project defers today is what keeps this
+    test meaningful when DEFERRED is emptied again, which is exactly what
+    happens each time a deferral is discharged.
+    """
+    assert shipped_and_deferred(_BAD_CAPABILITIES, _BAD_DEFERRED) == [
+        ".metascrubshipped"
+    ]
+    assert deferrals_without_a_reason(_BAD_DEFERRED) == [
+        ".metascrubempty", ".metascrubterse"
+    ]
+    assert deferrals_missing_from_the_readme(
+        _BAD_DEFERRED, "a README that names none of them") == sorted(_BAD_DEFERRED)
+
+    # The other direction. Without this the rules could be unfailable the
+    # opposite way, flagging every honest deferral, and the suite would say the
+    # same thing either way.
+    assert shipped_and_deferred({".mp4": "spec"}, _GOOD_DEFERRED) == []
+    assert deferrals_without_a_reason(_GOOD_DEFERRED) == []
+    assert deferrals_missing_from_the_readme(
+        _GOOD_DEFERRED, "we do not handle .metascrubfine yet") == []
+
+
+def test_an_empty_deferral_table_is_the_only_reason_the_gates_can_be_silent():
+    """
+    Name the vacuity rather than leaving it implicit.
+
+    When DEFERRED is empty the two per-entry rules return no violations because
+    there are no entries, not because the project checked anything. This test
+    asserts that reading, so the next person to see three green deferral gates
+    against an empty table knows what that green means.
+    """
+    assert deferrals_without_a_reason({}) == []
+    assert deferrals_missing_from_the_readme({}, "") == []
+    assert shipped_and_deferred(CAPABILITIES, {}) == []
+
+
+def test_the_reason_length_floor_is_the_one_the_gate_uses():
+    """
+    The boundary, asserted rather than assumed. A reason of exactly
+    MIN_REASON_CHARS is rejected and one character more is accepted, so the
+    constant cannot be changed without this saying so.
+    """
+    assert deferrals_without_a_reason({".e": "x" * MIN_REASON_CHARS}) == [".e"]
+    assert deferrals_without_a_reason({".e": "x" * (MIN_REASON_CHARS + 1)}) == []
+
+
+def test_prose_calling_a_format_deferred_is_backed_by_a_table_entry():
+    """
+    The failure that produced all of the above: four extensions were called
+    deferred in three documents while DEFERRED was empty, so nothing collected
+    them. Prose is where a reader looks; a table is what the gates read; the
+    two must not disagree.
+
+    Every extension the README names on a line that calls something deferred
+    has to appear in DEFERRED or in CAPABILITIES. A README line that says a
+    format WAS deferred and now ships is satisfied by CAPABILITIES, which is
+    why both tables count.
+    """
+    deferred_prose = set()
+    for line in _read_readme().lower().splitlines():
+        if "deferred" not in line:
+            continue
+        deferred_prose |= set(re.findall(r"`(\.[a-z0-9]{1,5})`", line))
+    unaccounted = sorted(ext for ext in deferred_prose
+                         if ext not in DEFERRED and ext not in CAPABILITIES)
+    assert not unaccounted, (
+        "README calls these deferred but no table collects them: "
+        f"{unaccounted}")
 
 
 def test_capability_rows_are_internally_consistent():
