@@ -610,7 +610,18 @@ merely unreferenced, that the stream inventory and every stream length are
 unchanged, that LibreOffice can still open the result, and that a file the
 engine cannot safely handle is refused with the input left untouched.
 
-292 passing and 4 skipped as of 2026-09-04. All four skips are deliberate:
+`tests/test_odf.py` covers OpenDocument: that the fixture is a real package
+carrying every seeded value, that the printer name is gone in its plain
+spelling, in its base64 spelling, and inside every base64 config item that
+remains, that the layout config-items survive so the allowlist cannot quietly
+become a denylist, that `mimetype` comes back first and STORED, that libmagic
+still names the document type, and that a naive all-deflated rebuild really is
+detectable, constructed on purpose so the argument cannot outlive its evidence.
+The core of it needs no external tool at all; the LibreOffice and libmagic
+layers skip when those are absent.
+
+492 passing and 4 skipped as of 2026-09-04, in 187 seconds on the dev machine (292 and
+4 before the ODF engine landed). All four skips are deliberate:
 `.doc`, `.xls` and `.ppt` skip the COMPLETE-formats check because they are
 declared PARTIAL, and one test that exercises the missing-LibreOffice path skips
 on a machine that has LibreOffice.

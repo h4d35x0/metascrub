@@ -4,6 +4,50 @@ Corrections and the patterns that prevent repeating them. Newest first.
 
 ---
 
+## 2026-09-04 - `pathlib.write_text` rewrote three files to CRLF, invisibly
+
+Editing `capabilities.py`, `engines/__init__.py` and `odf_engine.py` through a
+short `Path.write_text()` script converted every `\n` in those files to `\r\n`,
+because Python's text mode does newline translation on Windows. Nothing in the
+diff showed it. `git add` printed *"CRLF will be replaced by LF the next time
+Git touches it"* three times, which is the only reason it was caught, and only
+because that warning was read rather than skimmed past as noise.
+
+This repo pins `* text=auto eol=lf` in `.gitattributes` precisely because the
+fleet has already lost 552 files in the the parent project repo to the same class of
+problem. The commit was correct in the index; the working tree was not.
+
+**Pattern:** this is the `"\bin"` lesson below wearing different clothes. Any
+file this project writes through Python gets `newline=""` or `write_bytes`, and
+gets a byte scan afterwards. And a `git add` warning is output, not decoration:
+read it.
+
+---
+
+## 2026-09-04 - A plan's "measured contents, in full" is still one machine's output
+
+`docs/plan-new-engines.md` section 1.3e gives the contents of `manifest.rdf`
+"in full" for the `.odt` and `.ods` fixtures, and says it is the default
+skeleton carrying nothing identifying. Measured here on 2026-09-04: true for
+`.odt`, false for `.ods`. The LibreOffice on this machine writes a 899-byte
+`manifest.rdf` for a spreadsheet, with `ContentFile`, `StylesFile` and two
+`pkg#hasPart` triples in it.
+
+Nothing was harmed, because the difference was noticed before the engine was
+written. It changed the design though: the plan's "replace it and emit a NOTE
+when the original differed" would have fired a scary warning about custom RDF on
+every single `.ods`, which is a false alarm on structural triples. The engine
+classifies instead, and only warns when something outside the structural set is
+present.
+
+**Pattern:** a plan measured on one machine, one LibreOffice build and one
+document is a strong hypothesis, not a fact about the format. Re-measure the
+specific claims an implementation is about to depend on, especially the ones
+phrased as "in full" or "always". The cost was ten minutes; the cost of trusting
+it would have been a warning users learn to ignore.
+
+---
+
 ## 2026-09-04 - The deferral mechanism was built, and then not used
 
 `.qt`, `.mqv`, `.lrv` and `.f4a` are described as deferred in `tasks/todo.md`,

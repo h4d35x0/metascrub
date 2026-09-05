@@ -65,6 +65,23 @@ embeds a unique sentinel and the assertion searches the bytes for it.
 7. **PDF is never scrubbed with exiftool.** Use the pikepdf full-rewrite engine.
    See trap 0 above for why.
 
+8. **An ODF package rebuilt the OOXML way passes every obvious check and is
+   still broken.** The `mimetype` member must be FIRST and STORED. Measured
+   2026-09-04 on a rebuild that deflated it: LibreOffice opens it, exiftool
+   reports `FileType: ODT`, and `file` (libmagic 5.45) reports
+   `Zip data (MIME type "K,("?)` instead of `OpenDocument Text`. Only a content
+   sniffer notices, so `test_mimetype_is_first_and_stored` is the always-on
+   guard and `test_libmagic_still_identifies_the_package` is the belt. This is
+   why `odf_engine.py` is a separate engine and not a flag on `ooxml_engine.py`.
+
+9. **`settings.xml` in an ODF file carries the workstation's printer name and
+   its Windows DEVMODE blob, and the residual scan cannot see either.** exiftool
+   does not report `settings.xml` at all, so `verify.meaningful_values()` never
+   makes a needle out of it. The engine removes it; only the TESTS confirm the
+   removal, because they know the sentinel independently. Same asymmetry as
+   `w:rsid`. Never assume the residual scan is covering a carrier exiftool does
+   not read.
+
 ---
 
 ## Layout
@@ -75,7 +92,7 @@ embeds a unique sentinel and the assertion searches the bytes for it.
 | `metascrub/verify.py` | the residual byte scan; the heart of the project |
 | `metascrub/exif_io.py` | shared exiftool session, `MetadataRead` |
 | `metascrub/capabilities.py` | format table: engine + completeness per extension |
-| `metascrub/engines/` | exiftool, pdf (pikepdf), ooxml (zip), ole2 (olefile), av (ffmpeg) |
+| `metascrub/engines/` | exiftool, pdf (pikepdf), ooxml (zip), odf (zip), ole2 (olefile), av (ffmpeg) |
 | `metascrub/gui.py` | Tkinter window; a view over MetadataScrubber, never a fork |
 | `metascrub/theme.py` | Windows 95 palette and its contrast floor |
 | `metascrub/selftest.py` | end-to-end proof for a new machine |
@@ -89,7 +106,8 @@ embeds a unique sentinel and the assertion searches the bytes for it.
 ## Commands
 
 ```bash
-python -m pytest tests/ -q          # 292 passed, 4 skipped as of 2026-09-04
+python -m pytest tests/ -q          # 492 passed, 4 skipped, 187s, 2026-09-04
+                                    # (292 / 4 before the ODF engine landed)
 python -m metascrub selftest        # end-to-end, including a real round trip
 python -m metascrub doctor          # can the engines start
 python -m metascrub gui
@@ -130,3 +148,7 @@ See `tasks/todo.md`. The short version: no git remote yet, the parent project ad
 stated end state, and the `sh` launcher has never run on real macOS or Linux.
 OLE2 shipped on 2026-09-04 as PARTIAL; the Word SttbfAssoc and SttbSavedBy
 carriers are still untouched because no fixture here writes them.
+ODF shipped on 2026-09-04 as COMPLETE for all eight extensions. Flat XML
+OpenDocument (`.fodt` `.fods` `.fodp`) is in `DEFERRED` with a discharge
+condition, which is what made `DEFERRED` non-empty again; the four av
+extensions are still enforced by prose only and that is the AV team's item.
