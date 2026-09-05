@@ -288,6 +288,26 @@ _SVG_NOTE = ("XML comments, the <metadata> RDF block, editor state and "
 _SVG: Dict[str, FormatSpec] = {
     ".svg": FormatSpec(Engine.SVG, Completeness.PARTIAL, Container.RAW, True, _SVG_NOTE),
 }
+
+# .svgz is DEFERRED rather than merely absent, so a user is told why instead of
+# getting the same flat "unsupported" a .txt file gets, and so the gates in
+# tests/test_coverage_gate.py collect it. This project's rule is that a deferral
+# is enforced by a test, not by memory.
+#
+# Written as an update rather than as an entry in the DEFERRED literal above so
+# that the three engine branches in flight can each add their own deferrals
+# without colliding on one dict.
+DEFERRED.update({
+    ".svgz": (
+        "gzipped SVG. The engine would be a one-line gzip wrapper, but "
+        "Container.RAW makes the residual scan search the compressed bytes, "
+        "where it can see nothing at all, so the format would verify clean "
+        "unconditionally. Discharge condition: a Container value whose "
+        "searchable_bytes() branch decompresses first, of the same shape as "
+        "the existing ZIP branch, plus a fixture whose sentinel is found "
+        "before the scrub and absent after."
+    ),
+})
 # End SVG block.
 # ---------------------------------------------------------------------------
 

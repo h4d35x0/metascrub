@@ -350,6 +350,7 @@ position cannot be read is worse than an ugly one.
 | Images | jpg jpeg jpe png gif webp tiff tif heic heif avif jp2 psd | exiftool | complete |
 | Raw photo | dng cr2 nef arw orf rw2 pef srw erf mos iiq arq sr2 rwl nrw raw gpr | exiftool | **partial**, maker notes may retain private records |
 | PDF | pdf | pikepdf full rewrite | complete |
+| Vector | svg | XML text rewrite | **partial**, embedded base64 rasters and external local references survive and are reported |
 | Office | docx docm xlsx xlsm pptx pptm | zip rebuild | complete |
 | Legacy Office | doc xls ppt | olefile stream rewrite | **partial**, the applications keep second copies |
 | Video | mp4 m4v mov mkv webm avi f4v m4b ts m2ts | ffmpeg remux | complete |
@@ -361,11 +362,11 @@ promises. A partial result always says so.
 
 ### Not handled, and why
 
-- **Nothing is currently deferred.** `.doc`, `.xls` and `.ppt` were until
-  2026-09-04; they now ship as PARTIAL, and *Legacy Office, and what it does not
-  promise* below says what survives. `tests/test_coverage_gate.py` still
-  enforces the mechanism, so the next deferral cannot be discharged by
-  forgetting it.
+- **`.svgz` is deferred**, with the discharge condition below. `.doc`, `.xls`
+  and `.ppt` were deferred until 2026-09-04; they now ship as PARTIAL, and
+  *Legacy Office, and what it does not promise* below says what survives.
+  `tests/test_coverage_gate.py` enforces the mechanism, so a deferral cannot be
+  discharged by forgetting it.
 - **`.bmp`** is absent because exiftool 13.29 answers *"Writing of BMP files is
   not yet supported"*. Listing a format the tool cannot write would be a promise
   it cannot keep.
@@ -395,6 +396,14 @@ promises. A partial result always says so.
 - **Tracked changes and comments** in Office documents are detected and
   **reported, not removed**. They are user-visible content, not metadata, and
   deleting them silently would destroy work.
+- **`.svgz`** is deferred, not refused. It is gzipped SVG, and the engine would
+  be a one-line `gzip` wrapper, but `Container.RAW` makes the residual scan
+  search the compressed bytes, where it can see nothing at all. The format would
+  verify clean unconditionally, which is the one direction this tool must never
+  fail in. **Discharge condition:** a `Container` value whose
+  `searchable_bytes()` branch decompresses first, of the same shape as the
+  existing ZIP branch, plus a fixture whose sentinel is found before the scrub
+  and absent after.
 
 ### Legacy Office, and what it does not promise
 
@@ -452,6 +461,49 @@ property streams did not make the rest testable.
 **Needs `olefile`**, which `requirements.txt` installs. Without it the engine
 reports itself unavailable and `metascrub doctor` says so, rather than the
 format silently disappearing.
+
+### SVG, and the hole you should know about
+
+exiftool cannot write SVG at all (`exiftool -all=` answers *"ExifTool does not
+yet support writing of SVG images"* and exits 1), so `svg_engine.py` edits the
+XML text directly while exiftool still reads the baseline and the verification.
+
+**Removed:** XML comments, the `<metadata>` RDF block with its `dc:title`,
+`dc:creator`, `dc:rights` and `dc:description`, `<sodipodi:namedview>` (which
+records the author's window position, size, zoom and current layer), every
+`sodipodi:`, `inkscape:` and `ooo:` attribute, and the root `<title>` and
+`<desc>`. That set includes `sodipodi:docname`, the file's name on the author's
+disk; `inkscape:version`, the exact editor build; and
+`inkscape:export-filename` and `sodipodi:absref`, which are absolute paths
+through the author's home directory. The `xmlns:sodipodi`, `xmlns:inkscape` and
+`xmlns:ooo` declarations go too, but only once the prefix is confirmed unused,
+because a leftover declaration still announces which editor made the file.
+
+**Kept, deliberately:** everything that draws. `xmlns`, `viewBox`, `width`,
+`height`, `preserveAspectRatio`, `style`, geometry, `transform`, every `id`
+(they are the targets of `<use>`, of CSS and of gradient links), `<text>`
+content, and any `<title>` or `<desc>` nested inside a shape, which is that
+shape's accessibility name and is announced by screen readers. Only the ROOT
+`<title>` and `<desc>` are removed, and that line is measured rather than
+chosen: exiftool reports only those two, so only those two can ever become
+residual-scan needles.
+
+**Partial, and this one deserves a sentence rather than a table cell.** An SVG
+can embed a whole JPEG as a `data:image/jpeg;base64,` URI, and that JPEG keeps
+its own EXIF, including the photographer's name and the camera's GPS
+coordinates. Measured: exiftool reports nothing about it, so there is no needle
+to search for, and the residual byte scan finds nothing because the value is
+base64-wrapped. **The file reports `verified clean` while carrying a location.**
+It is not removed because removing it deletes the picture. The same applies to
+an `xlink:href` pointing at `file:///C:/Users/<name>/...`, which leaks a
+username. Both are reported as `NOTE:` lines in the result, and the external
+reference is named in full so you can act on it. If a drawing came out of a
+photo-tracing workflow, treat a scrubbed SVG as reduced, not clean.
+
+`tests/test_svg.py` enforces that claim rather than describing it: it decodes
+the data URI back out of the scrubbed output and asserts the EXIF sentinel is
+still in the decoded bytes. If a later version starts removing it, that test
+fails and the note above has to change with it.
 
 ---
 

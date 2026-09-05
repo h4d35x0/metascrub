@@ -65,6 +65,15 @@ embeds a unique sentinel and the assertion searches the bytes for it.
 7. **PDF is never scrubbed with exiftool.** Use the pikepdf full-rewrite engine.
    See trap 0 above for why.
 
+8. **`_STRUCTURAL_TAGS` in `verify.py` is matched on the BARE TAG NAME, for
+   every format.** Adding a name there means no value carried by a tag of that
+   name is ever searched for again, in any file type. Use it only for a name no
+   other container can have (`compressorid`, `doctype`). For anything a second
+   format could also carry, use `_STRUCTURAL_VALUES`, which is keyed on
+   (group, tag name) plus a predicate over the value. Whichever is used, the
+   overcorrection test lands in the SAME commit: it is the only thing standing
+   between a narrow exclusion and a silent blind spot.
+
 ---
 
 ## Layout
@@ -75,7 +84,7 @@ embeds a unique sentinel and the assertion searches the bytes for it.
 | `metascrub/verify.py` | the residual byte scan; the heart of the project |
 | `metascrub/exif_io.py` | shared exiftool session, `MetadataRead` |
 | `metascrub/capabilities.py` | format table: engine + completeness per extension |
-| `metascrub/engines/` | exiftool, pdf (pikepdf), ooxml (zip), ole2 (olefile), av (ffmpeg) |
+| `metascrub/engines/` | exiftool, pdf (pikepdf), ooxml (zip), ole2 (olefile), av (ffmpeg), svg (XML text) |
 | `metascrub/gui.py` | Tkinter window; a view over MetadataScrubber, never a fork |
 | `metascrub/theme.py` | Windows 95 palette and its contrast floor |
 | `metascrub/selftest.py` | end-to-end proof for a new machine |
@@ -89,15 +98,15 @@ embeds a unique sentinel and the assertion searches the bytes for it.
 ## Commands
 
 ```bash
-python -m pytest tests/ -q          # 292 passed, 4 skipped as of 2026-09-04
+python -m pytest tests/ -q          # 394 passed, 5 skipped on feature/svg-engine
 python -m metascrub selftest        # end-to-end, including a real round trip
 python -m metascrub doctor          # can the engines start
 python -m metascrub gui
 ```
 
-The 4 skips are intentional: .doc, .xls and .ppt are PARTIAL so they skip the
-COMPLETE-formats check, and one test of the missing-LibreOffice path skips where
-LibreOffice is present.
+The 5 skips are intentional: .doc, .xls, .ppt and .svg are PARTIAL so they skip
+the COMPLETE-formats check, and one test of the missing-LibreOffice path skips
+where LibreOffice is present.
 
 **exiftool on this machine** lives at
 `C:\Users\user\AppData\Local\Programs\ExifTool\` and may not be on
@@ -129,4 +138,8 @@ the PATH of a shell started before it was installed.
 See `tasks/todo.md`. The short version: no git remote yet, the parent project adoption is the
 stated end state, and the `sh` launcher has never run on real macOS or Linux.
 OLE2 shipped on 2026-09-04 as PARTIAL; the Word SttbfAssoc and SttbSavedBy
-carriers are still untouched because no fixture here writes them.
+carriers are still untouched because no fixture here writes them. SVG shipped
+the same day as PARTIAL; EXIF inside a base64-embedded raster and an external
+`file:///` reference both survive and are reported. `.svgz` is deferred, because
+`Container.RAW` would hand the residual scan the compressed bytes and every
+`.svgz` would verify clean unconditionally.

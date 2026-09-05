@@ -4,6 +4,42 @@ Corrections and the patterns that prevent repeating them. Newest first.
 
 ---
 
+## 2026-09-04 - A plan that measured the problem can still propose too wide a fix
+
+`docs/plan-new-engines.md` section 2.2 measured a real defect precisely: an SVG
+with every trace of metadata removed verified as `residual_found` on the value
+of `SVG:Xmlns`, which is the namespace declaration without which the file is not
+an SVG. The measurement was right and the diagnosis was right.
+
+The proposed fix was to add `"xmlns"` and `"preserveaspectratio"` to
+`_STRUCTURAL_TAGS`. That set is matched at `verify.py` on the BARE TAG NAME,
+globally, for every format. `xmlns` is not a name only SVG can carry, so the fix
+would have stopped the residual scan searching for any value stored under a tag
+of that name in any file type, forever. The plan's own risk section called the
+blast radius "nil" on the grounds that no other handled format reports those
+tags today, which is true and is not the same claim.
+
+The narrower fix was available and cost about the same: `_STRUCTURAL_VALUES`,
+keyed on (exiftool group, tag name) with a predicate over the VALUE. It
+suppresses only the exact structural string, in the one group that reports it.
+
+**Pattern:** a plan's measurement and a plan's remedy are two separate claims
+and they need separate scrutiny. The measurement is the expensive part and it
+earns trust; the remedy is a design decision that arrives wearing the
+measurement's credibility. Before implementing an exclusion a plan proposes, ask
+what ELSE it excludes, on inputs the plan never measured. The tell here was that
+the fix was expressed in a wider vocabulary than the problem: the problem was
+about one group and one exact value, the fix was about a name.
+
+Also, the second half of the older exclusion lesson turned out to be the part
+that did the work. Writing the overcorrection test first is what forced the key
+to be (group, tag, value) rather than tag: there is no way to write "a secret
+smuggled into the xmlns value is still found" against a tag-name exclusion,
+because the test cannot pass. A test you cannot write is a design telling you
+something.
+
+---
+
 ## 2026-09-04 - The deferral mechanism was built, and then not used
 
 `.qt`, `.mqv`, `.lrv` and `.f4a` are described as deferred in `tasks/todo.md`,
