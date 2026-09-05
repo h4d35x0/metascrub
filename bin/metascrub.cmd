@@ -44,10 +44,18 @@ rem Run from source. No install step, so the code that runs is always the code
 rem sitting next to this launcher.
 set "PYTHONPATH=%PROJECT%;%PYTHONPATH%"
 
-where py >nul 2>&1
+rem `python` FIRST, `py` only as a fallback. This order matters and the reverse
+rem is a real bug, caught by CI on 2026-09-05: the `py` launcher deliberately
+rem ignores virtual environments and PATH order and runs the NEWEST installed
+rem Python. On a runner with 3.11 active and the dependencies installed into it,
+rem `py -3` selected an unrelated 3.14 and then correctly reported pikepdf,
+rem olefile and pyexiftool all missing. That reads as a broken install when it
+rem is actually the wrong interpreter, which is the most expensive kind of wrong
+rem answer. `python` resolves through PATH, so an activated venv wins.
+where python >nul 2>&1
 if %ERRORLEVEL%==0 (
-    py -3 -m metascrub %*
-) else (
     python -m metascrub %*
+) else (
+    py -3 -m metascrub %*
 )
 exit /b %ERRORLEVEL%

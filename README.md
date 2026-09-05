@@ -220,6 +220,13 @@ Also needs two binaries on PATH:
 | `exiftool` | **reading metadata for every format**, and writing images | `exiftool -ver` | `winget install OliverBetz.ExifTool` |
 | `ffmpeg` | audio and video | `ffmpeg -version` | `winget install Gyan.FFmpeg` |
 
+**exiftool 13.x or newer.** Measured 2026-09-05: exiftool **12.76**, which is
+what Ubuntu 24.04 ships in `libimage-exiftool-perl`, reports `ZIP:*` container
+tags for zip-based formats that 13.x does not, and 106 tests fail on it. The
+tool has only ever been validated against 13.x. If your distribution packages
+an older one, install from [exiftool.org](https://exiftool.org) instead of your
+package manager.
+
 **`exiftool` is required for all formats, not just images.** Every engine reads
 its baseline metadata through exiftool even when it writes with pikepdf,
 zipfile or ffmpeg, because reading with a different tool than the one that

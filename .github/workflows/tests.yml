@@ -48,12 +48,24 @@ jobs:
 
       # --- exiftool is REQUIRED for every format, not just images. Without it
       # --- the tool refuses to run and the suite fails at fixture construction.
-      - name: Install exiftool and ffmpeg (Linux)
+      # NOT apt's libimage-exiftool-perl. Ubuntu noble ships exiftool 12.76, and
+      # CI's first run measured 106 test failures on it: 12.76 reports ZIP:*
+      # container tags for zip-based formats that 13.x does not, so the
+      # zero-tag code paths behave differently. This tool has only ever been
+      # validated against 13.x, so CI installs 13.x rather than pretending the
+      # older one is equivalent. The README states the requirement.
+      - name: Install exiftool 13.x, ffmpeg and a display (Linux)
         if: runner.os == 'Linux'
+        env:
+          EXIFTOOL_VERSION: '13.29'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libimage-exiftool-perl ffmpeg file xvfb
+          sudo apt-get install -y --no-install-recommends ffmpeg file xvfb
+          curl -fsSL "https://exiftool.org/Image-ExifTool-${EXIFTOOL_VERSION}.tar.gz" -o exiftool.tar.gz
+          tar xzf exiftool.tar.gz
+          sudo cp -r "Image-ExifTool-${EXIFTOOL_VERSION}/exiftool" "Image-ExifTool-${EXIFTOOL_VERSION}/lib" /usr/local/bin/
+          rm -rf exiftool.tar.gz "Image-ExifTool-${EXIFTOOL_VERSION}"
+          exiftool -ver
 
       - name: Install exiftool and ffmpeg (macOS)
         if: runner.os == 'macOS'
