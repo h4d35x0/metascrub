@@ -333,6 +333,60 @@ def test_an_svg_with_nothing_to_remove_is_left_byte_identical(tmp_path):
     assert result["verification"]["verdict"] == "verified_clean"
 
 
+def test_a_malformed_svg_is_reported_clean_while_still_carrying_metadata(tmp_path):
+    """
+    KNOWN DEFECT, pinned here so it cannot be lost. This test asserts the
+    CURRENT behaviour, and it is expected to FAIL and be rewritten when the
+    defect is fixed. That is what it is for.
+
+    Measured 2026-09-04, exiftool 13.29, on a truncated SVG carrying
+    sodipodi:docname:
+
+        [ExifTool] Warning  : XMP format error (no closing tag for svg) [x2]
+        [File]     FileType : SVG
+        (no [SVG] tags at all)
+
+    exiftool identifies the file, does not fail, and surfaces zero SVG tags.
+    Everything it emits sits in the File and ExifTool pseudo-groups, so
+    _real_tags() is empty and MetadataScrubber.sanitize_file() takes its
+    STATUS_CLEAN short circuit BEFORE any engine runs. The user is told "no
+    metadata carriers found" about a file that carries an editor's docname.
+
+    This is not the fail-open that MetadataRead fixed: the read genuinely
+    succeeded. It is the orchestrator treating "the reader found nothing" and
+    "there is nothing" as the same state when the reader also raised a warning
+    that it could not parse the document.
+
+    It is not fixed here because the fix belongs in scrubber.py and changes
+    behaviour for EVERY format, which is not this branch's to decide. It cannot
+    be reached by a well-formed SVG: any SVG that parses reports at least
+    SVG:Xmlns, so _real_tags() is never empty. See tasks/todo.md.
+    """
+    path = str(tmp_path / "truncated.svg")
+    value = sentinel("svgtruncated")
+    with open(path, "wb") as fh:
+        fh.write(
+            ('<?xml version="1.0" encoding="UTF-8"?>\n'
+             '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"\n'
+             '     sodipodi:docname="' + value + '.svg"><rect x="1" y="1"'
+             ).encode("utf-8")
+        )
+    with open(path, "rb") as fh:
+        original = fh.read()
+
+    result = _scrub(path)
+
+    assert result["status"] == "clean"
+    assert result["detail"] == "no metadata carriers found"
+    # The file is at least not damaged, which is the part that must never
+    # regress even while the verdict above is wrong.
+    with open(path, "rb") as fh:
+        assert fh.read() == original
+    assert raw_contains(path, value), (
+        "the defect this test pins is gone; rewrite it to assert the fix"
+    )
+
+
 def test_line_endings_are_not_rewritten(tmp_path):
     """
     An LF-only file must come out LF-only. A Windows run that quietly converts
