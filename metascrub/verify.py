@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import zipfile
 from dataclasses import dataclass, field
 from enum import Enum
@@ -74,6 +75,57 @@ _STRUCTURAL_TAGS = frozenset({
     # OOXML part inventory, which names required package parts
     "titlesofparts", "headingpairs", "presentationformat",
 })
+
+# Structure that is structure in ONE format and only at ONE exact value.
+#
+# _STRUCTURAL_TAGS above is matched on the bare tag name, globally, for every
+# format. That is the right shape for a name like "compressorid" that no other
+# handled container reports, and the wrong shape for a name like "xmlns" that
+# any XML-bearing format could carry: adding it there would mean no value stored
+# under a tag of that name is ever searched for again, in any file type. That is
+# a widened blind spot in the one function this project exists to make
+# trustworthy, and this project's own lesson from the OLE2 directory-name
+# collision was: exclude a REGION, not a STRING.
+#
+# So these are keyed on (exiftool group, bare tag name) AND carry a predicate
+# over the VALUE. An entry only suppresses a needle when all three agree, which
+# leaves three ways a real leak is still caught:
+#   - the same tag name in a different group is still searched,
+#   - the same tag in the same group holding a different value is still
+#     searched, which is exactly where a smuggled value would sit,
+#   - every other tag in the group is untouched.
+#
+# Measured 2026-09-04 with exiftool 13.29, through this project's own read flags
+# (-G -n), on a hand-authored Inkscape-style SVG:
+#     [SVG]  Xmlns                : http://www.w3.org/2000/svg
+#     [SVG]  PreserveAspectRatio  : xMidYMid meet
+# Both are required for the file to be an SVG and to lay out, both are written
+# back identically by any engine that rebuilds the file, and without this a
+# correctly cleaned SVG verified as RESIDUAL_FOUND on its own namespace
+# declaration. tests/test_verify_structural.py plants a real secret into each of
+# the three positions above and requires the scan to still find it.
+_SVG_NAMESPACE = "http://www.w3.org/2000/svg"
+
+# The SVG 1.1 grammar for preserveAspectRatio. Every string it accepts is drawn
+# from a closed keyword set, so a matching value carries no user information;
+# anything else is not a preserveAspectRatio and stays a needle.
+_PRESERVE_ASPECT_RATIO = re.compile(
+    r"^(defer\s+)?(none|x(Min|Mid|Max)Y(Min|Mid|Max))(\s+(meet|slice))?$"
+)
+
+
+def _is_svg_namespace(text: str) -> bool:
+    return text == _SVG_NAMESPACE
+
+
+def _is_preserve_aspect_ratio(text: str) -> bool:
+    return bool(_PRESERVE_ASPECT_RATIO.match(text))
+
+
+_STRUCTURAL_VALUES = {
+    ("SVG", "xmlns"): _is_svg_namespace,
+    ("SVG", "preserveaspectratio"): _is_preserve_aspect_ratio,
+}
 
 # A needle shorter than this produces false positives against binary payloads.
 # Eight characters of an exact recovered string is specific enough to be signal.
@@ -133,9 +185,15 @@ def meaningful_values(metadata: Dict) -> Set[str]:
             continue
         if bare.lower() in _STRUCTURAL_TAGS:
             continue
+        # None for almost every tag. When present, it drops only the values that
+        # ARE the structure, and leaves every other value under the same tag as
+        # a needle. See _STRUCTURAL_VALUES.
+        structural = _STRUCTURAL_VALUES.get((group, bare.lower()))
         for text in _flatten(value):
             text = text.strip()
             if len(text) < _MIN_NEEDLE:
+                continue
+            if structural is not None and structural(text):
                 continue
             # Pure digits and separator-only strings collide with binary data.
             if text.replace(":", "").replace("-", "").replace(".", "").replace(" ", "").isdigit():
