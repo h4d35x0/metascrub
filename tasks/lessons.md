@@ -4,6 +4,50 @@ Corrections and the patterns that prevent repeating them. Newest first.
 
 ---
 
+## 2026-09-04 - The deferral mechanism was built, and then not used
+
+`.qt`, `.mqv`, `.lrv` and `.f4a` are described as deferred in `tasks/todo.md`,
+in `README.md`, and in a comment in `capabilities.py`. `DEFERRED` in
+`capabilities.py` is `{}`.
+
+Three gates in `tests/test_coverage_gate.py` exist to collect deferrals, and all
+three iterate `DEFERRED`. With it empty they run zero assertions and report
+green. The project built the exact mechanism that stops a deferral being
+discharged by forgetting it, wrote the deferral in prose in three places, and
+never put it in the one table the mechanism reads.
+
+The OLE2 deferral is the control that proves the mechanism can work. The moment
+`.doc`, `.xls` and `.ppt` moved into `CAPABILITIES`,
+`test_ole2_cannot_ship_without_its_fixtures_and_tests` stopped skipping and
+began demanding the fixtures. That gate names its extensions literally instead
+of reading `DEFERRED`, which is the only reason it had teeth.
+
+**Pattern:** an enforcement mechanism is engaged only for the entries actually
+in its table, and a loop over an empty container is the quietest possible pass.
+When you defer something, the last step is to open the thing that is supposed to
+collect it and confirm your entry is in the collection. Prose in three files is
+still memory.
+
+---
+
+## 2026-09-04 - A recorded pass count is an environment fact, not a gate
+
+The handoff said "expect 292 passed, 4 skipped". This machine gives 291 passed,
+5 skipped. Nothing regressed: `tkinterdnd2` is not installed here, so the one
+drag and drop test skips instead of passing. Both runs total 296 tests and both
+have zero failures.
+
+Read as a gate, that delta looks like a broken project and invites a hunt
+through the wrong code. The pass count moved for a reason that has nothing to do
+with the product.
+
+**Pattern:** record a pass count together with the environment that produced it,
+and compare totals and failures before comparing passes. Then read every skip
+reason with `-rs` before calling a suite green. Skips are the load-bearing
+number, because a skip is exactly where a test has quietly stopped asserting.
+
+---
+
 ## 2026-09-04 - The blocker was a missing fixture, and the fixture was one command away
 
 `.doc`, `.xls` and `.ppt` were deferred with the reason "there is no way on this
