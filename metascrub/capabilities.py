@@ -216,10 +216,26 @@ _OLE2: Dict[str, FormatSpec] = {
         "survive"),
 }
 
-# Nothing is deferred at the moment. The mechanism stays: a deferral is an
-# obligation with a due date, and tests/test_coverage_gate.py is what collects
-# it rather than anybody's memory.
-DEFERRED: Dict[str, str] = {}
+# A deferral is an obligation with a due date, and tests/test_coverage_gate.py
+# is what collects it rather than anybody's memory. Prose in the README and in
+# tasks/todo.md is NOT the mechanism: an entry that is not in this dict is
+# collected by nothing, because every gate that reads deferrals iterates this
+# table and a loop over an empty container is the quietest possible pass.
+#
+# Measured 2026-09-04 on ffmpeg 2024-12-11-git-a518b5540d: writing to a path
+# ending in any of these four extensions with no explicit -f fails with
+# "Unable to choose an output format" / "Error opening output files: Invalid
+# argument". av_engine.py names its temp file with the target extension and
+# lets ffmpeg infer the muxer, so these cannot round trip through it yet.
+_AV_MUXER_DEFERRAL = ("ffmpeg binds no output muxer to this extension, so the "
+                      "av engine's temp file cannot be written; needs an "
+                      "explicit extension-to-muxer map in av_engine.py")
+DEFERRED: Dict[str, str] = {
+    ".qt": _AV_MUXER_DEFERRAL + " (-f mov)",
+    ".mqv": _AV_MUXER_DEFERRAL + " (-f mov)",
+    ".lrv": _AV_MUXER_DEFERRAL + " (-f mp4)",
+    ".f4a": _AV_MUXER_DEFERRAL + " (-f mp4)",
+}
 
 # TIER 5: audio and video. ffmpeg remux, not exiftool.
 _AV_NOTE = "container, per-stream and chapter metadata; remux without re-encoding"
@@ -237,13 +253,8 @@ _AV_NOTE = "container, per-stream and chapter metadata; remux without re-encodin
 #               nothing to remove.
 #   .3gp .mpg .amr  no fixture could be built that actually stored the tag with
 #               the codecs available here.
-#   .qt .mqv .lrv .f4a  ffmpeg muxes these happily when told the format
-#               explicitly, but av_engine.py names its temp file with the
-#               TARGET extension and lets ffmpeg infer the muxer, and ffmpeg
-#               binds no output muxer to these extensions:
-#               "Error opening output files: Invalid argument". Supporting them
-#               needs an explicit extension-to-muxer map in the engine, which is
-#               an engine change rather than a table entry. See tasks/todo.md.
+#   .qt .mqv .lrv .f4a  DEFERRED rather than refused; see the DEFERRED table
+#               above, which is what the coverage gates actually read.
 _AV: Dict[str, FormatSpec] = {
     ext: FormatSpec(Engine.AV, Completeness.COMPLETE, Container.RAW, True, _AV_NOTE)
     for ext in (".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi",

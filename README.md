@@ -361,11 +361,12 @@ promises. A partial result always says so.
 
 ### Not handled, and why
 
-- **Nothing is currently deferred.** `.doc`, `.xls` and `.ppt` were until
-  2026-09-04; they now ship as PARTIAL, and *Legacy Office, and what it does not
-  promise* below says what survives. `tests/test_coverage_gate.py` still
-  enforces the mechanism, so the next deferral cannot be discharged by
-  forgetting it.
+- **The deferred formats are `.qt`, `.mqv`, `.lrv` and `.f4a`**, listed in
+  `DEFERRED` in `metascrub/capabilities.py` and detailed at the end of this
+  section. `.doc`, `.xls` and `.ppt` were deferred until 2026-09-04; they now
+  ship as PARTIAL, and *Legacy Office, and what it does not promise* below says
+  what survives. `tests/test_coverage_gate.py` enforces the mechanism, so a
+  deferral cannot be discharged by forgetting it.
 - **`.bmp`** is absent because exiftool 13.29 answers *"Writing of BMP files is
   not yet supported"*. Listing a format the tool cannot write would be a promise
   it cannot keep.
