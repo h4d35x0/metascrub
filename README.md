@@ -351,6 +351,7 @@ position cannot be read is worse than an ugly one.
 | Raw photo | dng cr2 nef arw orf rw2 pef srw erf mos iiq arq sr2 rwl nrw raw gpr | exiftool | **partial**, maker notes may retain private records |
 | PDF | pdf | pikepdf full rewrite | complete |
 | Office | docx docm xlsx xlsm pptx pptm | zip rebuild | complete |
+| OpenDocument | odt ott ods ots odp otp odg otg | zip rebuild | complete |
 | Legacy Office | doc xls ppt | olefile stream rewrite | **partial**, the applications keep second copies |
 | Video | mp4 m4v mov mkv webm avi f4v m4b ts m2ts | ffmpeg remux | complete |
 | Audio | mp3 m4a flac wav ogg opus aiff aif | ffmpeg remux | complete |
@@ -361,11 +362,18 @@ promises. A partial result always says so.
 
 ### Not handled, and why
 
-- **Nothing is currently deferred.** `.doc`, `.xls` and `.ppt` were until
-  2026-09-04; they now ship as PARTIAL, and *Legacy Office, and what it does not
-  promise* below says what survives. `tests/test_coverage_gate.py` still
-  enforces the mechanism, so the next deferral cannot be discharged by
-  forgetting it.
+- **`.fodt`, `.fods` and `.fodp`** (flat XML OpenDocument) are deferred, not
+  refused. They are a single uncompressed XML file rather than a zip package, so
+  the ODF engine's whole strategy does not apply to them. Measured 2026-09-04
+  with exiftool 13.29: a `.fodt` reports `FileType: XML`, reads Title and
+  Creator correctly, and refuses to write with *"[minor] Can't handle XMP
+  attribute 'office:mimetype'"*. **Discharge condition:** a raw-XML engine that
+  edits the `office:document` element in place, a fixture per extension, and a
+  `tests/test_flat_odf.py` that searches the output bytes.
+- **`.doc`, `.xls` and `.ppt`** were deferred until 2026-09-04; they now ship as
+  PARTIAL, and *Legacy Office, and what it does not promise* below says what
+  survives. `tests/test_coverage_gate.py` enforces the mechanism, so a deferral
+  cannot be discharged by forgetting it.
 - **`.bmp`** is absent because exiftool 13.29 answers *"Writing of BMP files is
   not yet supported"*. Listing a format the tool cannot write would be a promise
   it cannot keep.
@@ -395,6 +403,64 @@ promises. A partial result always says so.
 - **Tracked changes and comments** in Office documents are detected and
   **reported, not removed**. They are user-visible content, not metadata, and
   deleting them silently would destroy work.
+
+### OpenDocument, and the printer sitting in every Writer document
+
+`.odt`, `.ods`, `.odp` and the template and drawing variants ship as of
+2026-09-04. exiftool reads all of them and writes none of them (*"Writing of ODT
+files is not yet supported"*, exit 1), so the package is rebuilt, the way
+`.docx` is.
+
+**The finding that justified doing it at all is in `settings.xml`, and nothing
+else in this tool would ever have looked there.** Measured on a `.odt` produced
+by LibreOffice on this machine:
+
+```
+PrinterName    string        "<printer name redacted>"          the workstation's default printer
+PrinterSetup   base64Binary  11316 characters  ->   8487 bytes of Windows DEVMODE
+```
+
+Decoding the blob yields the printer name twice in ASCII and once in UTF-16LE,
+plus the exact driver string `<printer model redacted>`. A document published after
+"metadata removal" would still name the owner's printer and its driver version.
+`settings.xml` also carries `Rsid` and `RsidRoot`, which are the LibreOffice
+analogue of the `w:rsid` revision-save identifiers stripped from `.docx`.
+
+**The residual scan cannot see this one, and that is written down rather than
+left implicit.** exiftool does not report `settings.xml`, so the printer name
+never becomes a needle and the post-sanitize scan never searches for it. The
+engine removes it; the *tests* confirm the removal, because they know the
+sentinel independently. It is the same asymmetry `w:rsid` already lives with.
+
+Also removed: the whole of `meta.xml`, replaced with a valid empty skeleton
+(title, subject, description, `dc:creator` which is the last person to save,
+`meta:initial-creator` which is the original author, keywords, the exact
+LibreOffice build and git commit, creation and modification dates, editing
+cycles, editing duration, document statistics, user-defined properties, and the
+template path); `Thumbnails/thumbnail.png` with its manifest entry; the package
+`manifest.rdf`, replaced with the default skeleton; any in-content `.rdf`
+member; and `officeooo:rsid` attributes in `content.xml` and `styles.xml`.
+
+**Annotations and tracked changes are reported, not removed**, the same as
+comments in a `.docx`. An annotation carries a `<dc:creator>` naming the
+commenter, so the note is the only thing standing between a user and a surprise.
+
+**`settings.xml` is edited with an allowlist of names to DELETE, never a
+denylist of names to keep.** It also holds `PrinterIndependentLayout`,
+`UseFormerLineSpacing` and roughly 120 other compatibility flags that decide how
+the document lays out. Deleting those would silently reflow the user's document,
+which is a worse outcome than leaving metadata behind, and
+`tests/test_odf.py::test_layout_config_items_survive` is the guard.
+
+**One trap that a naive rebuild falls into silently.** The `mimetype` member
+must be the FIRST entry in the zip and must be STORED, not deflated. Measured on
+a rebuild that deflated it: LibreOffice still opens the file, exiftool still
+reports `FileType: ODT`, and `file` (libmagic 5.45) reports
+`Zip data (MIME type "K,("?)` instead of `OpenDocument Text`. The two obvious
+checks both pass while content sniffers, and therefore `xdg-mime` and upload
+validators and mail gateways, stop recognising the document. Producing that from
+a metadata tool is a real user-visible break, so there are two tests: one that
+needs nothing but the stdlib, and one that runs `file` when it is available.
 
 ### Legacy Office, and what it does not promise
 

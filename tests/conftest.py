@@ -101,8 +101,23 @@ def _load_ole2_builder():
     return module
 
 
+def _load_odf_builder():
+    """Load tests/fixtures/odf/build_odf.py by path, for the reason above."""
+    import importlib.util
+
+    location = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "fixtures", "odf", "build_odf.py"
+    )
+    spec = importlib.util.spec_from_file_location("metascrub_odf_fixtures", location)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 build_ole2 = _load_ole2_builder()
+build_odf = _load_odf_builder()
 HAVE_LIBREOFFICE = build_ole2.find_soffice() is not None
+HAVE_LIBMAGIC = shutil.which("file") is not None
 
 
 def _exiftool_write(path: str, **tags: str) -> None:
@@ -203,6 +218,72 @@ def make_pptx(tmp_path):
     props.title = value
     presentation.save(path)
     assert zip_contains(path, value), "pptx fixture did not store the sentinel"
+    return path, value
+
+
+# OPENDOCUMENT
+#
+# Two routes, and the difference between them is the point. The hand-built
+# package needs nothing but the stdlib, so it never skips and never varies by
+# platform, and it can carry a chosen printer name, a populated meta:template
+# href and an officeooo:rsid, none of which LibreOffice can be asked for. The
+# LibreOffice route is the control on it: a hand-built fixture proves the engine
+# handles a file the TEST wrote and nothing more.
+
+ODF_KINDS = [".odt", ".ott", ".ods", ".ots", ".odp", ".otp", ".odg", ".otg"]
+
+# The subset LibreOffice has an export filter for. It will not produce a genuine
+# Draw document from a Writer, Calc or Impress seed: measured 2026-09-04,
+# `--convert-to odg` and `--convert-to odg:draw8` on a .pptx both wrote a
+# package whose mimetype member says ...opendocument.presentation, and libmagic
+# calls the result an OpenDocument Presentation. The hand-built .odg is the
+# genuine Draw document here; libmagic calls it OpenDocument Drawing.
+ODF_LIBREOFFICE_KINDS = [".odt", ".ott", ".ods", ".odp"]
+
+
+def make_odf(tmp_path, ext: str):
+    """Hand-built ODF package carrying the whole sentinel family."""
+    path = str(tmp_path / f"fixture{ext}")
+    value = sentinel(ext.lstrip("."))
+    build_odf.build_odf(ext, path, value)
+    assert zip_contains(path, value), f"{ext} fixture did not store the sentinel"
+    return path, value
+
+
+_ODF_LO_CACHE = {}
+_ODF_LO_CACHE_DIR = None
+
+
+def _odf_lo_cache_dir():
+    global _ODF_LO_CACHE_DIR
+    if _ODF_LO_CACHE_DIR is None:
+        _ODF_LO_CACHE_DIR = tempfile.mkdtemp(prefix="metascrub-odf-")
+        atexit.register(shutil.rmtree, _ODF_LO_CACHE_DIR, True)
+    return _ODF_LO_CACHE_DIR
+
+
+def make_odf_from_libreoffice(tmp_path, ext: str):
+    """
+    Return (path, sentinel) for an ODF document LibreOffice actually wrote.
+
+    Skips rather than fails when LibreOffice is absent or the conversion did not
+    produce a package. Cached for the session and copied per test, because each
+    conversion costs a LibreOffice start.
+    """
+    if not HAVE_LIBREOFFICE:
+        pytest.skip("LibreOffice not available; cannot build a real ODF fixture")
+    value = sentinel("lo" + ext.lstrip("."))
+    if ext not in _ODF_LO_CACHE:
+        built = build_odf.libreoffice_odf(
+            ext, _odf_lo_cache_dir(), value,
+            build_ole2.find_soffice(), build_ole2.convert,
+        )
+        if built is None:
+            pytest.skip(f"LibreOffice did not produce an ODF package for {ext}")
+        _ODF_LO_CACHE[ext] = built
+    path = str(tmp_path / f"lofixture{ext}")
+    shutil.copyfile(_ODF_LO_CACHE[ext], path)
+    assert zip_contains(path, value), f"{ext} LibreOffice fixture lost the sentinel"
     return path, value
 
 
@@ -337,6 +418,8 @@ def build(kind: str, tmp_path):
         return make_xlsx(tmp_path)
     if kind == ".pptx":
         return make_pptx(tmp_path)
+    if kind in ODF_KINDS:
+        return make_odf(tmp_path, kind)
     if kind in (".doc", ".xls", ".ppt"):
         return make_ole2(tmp_path, kind)
     if kind in (".mp4", ".mkv", ".mov"):
@@ -363,6 +446,10 @@ def build(kind: str, tmp_path):
 ALL_KINDS = [ext for ext, _ in IMAGE_FORMATS] + [
     ".pdf", ".docx", ".xlsx", ".pptx", ".doc", ".xls", ".ppt",
     ".mp4", ".mkv", ".mp3", ".flac",
+    # OpenDocument. All eight get a real fixture rather than a proxy: the
+    # builder is stdlib-only, so a template costs the same as a document and a
+    # declared proxy would be a claim where a measurement was available.
+] + ODF_KINDS + [
     # Added 2026-09-04. Only the containers that are genuinely distinct get
     # a real fixture; the rest declare a proxy in
     # test_coverage_gate._COVERED_BY.

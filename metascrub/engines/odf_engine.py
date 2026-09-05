@@ -291,7 +291,16 @@ class OdfEngine(BaseEngine):
         dst.writestr(info, data)
 
     def _members_to_drop(self, names: List[str]) -> Set[str]:
-        drop = {n for n in names if n.startswith(_THUMBNAIL_DIR) and not n.endswith("/")}
+        """
+        Everything under Thumbnails/, the directory entry included, plus every
+        in-content RDF part.
+
+        The directory entry goes too. Leaving an empty Thumbnails/ behind would
+        keep a manifest entry for a folder with nothing in it, and it would tell
+        anyone reading the package that a thumbnail used to be there. Neither is
+        harmful; neither is a reason to keep it.
+        """
+        drop = {n for n in names if n.startswith(_THUMBNAIL_DIR)}
         drop.update(
             n for n in names
             if n.lower().endswith(".rdf") and n != _PACKAGE_RDF
