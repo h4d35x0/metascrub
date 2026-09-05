@@ -91,6 +91,15 @@ embeds a unique sentinel and the assertion searches the bytes for it.
    `w:rsid`. Never assume the residual scan is covering a carrier exiftool does
    not read.
 
+11. **`_STRUCTURAL_TAGS` in `verify.py` is matched on the BARE TAG NAME, for
+   every format.** Adding a name there means no value carried by a tag of that
+   name is ever searched for again, in any file type. Use it only for a name no
+   other container can have (`compressorid`, `doctype`). For anything a second
+   format could also carry, use `_STRUCTURAL_VALUES`, which is keyed on
+   (group, tag name) plus a predicate over the value. Whichever is used, the
+   overcorrection test lands in the SAME commit: it is the only thing standing
+   between a narrow exclusion and a silent blind spot.
+
 ---
 
 ## Layout
@@ -101,7 +110,7 @@ embeds a unique sentinel and the assertion searches the bytes for it.
 | `metascrub/verify.py` | the residual byte scan; the heart of the project |
 | `metascrub/exif_io.py` | shared exiftool session, `MetadataRead` |
 | `metascrub/capabilities.py` | format table: engine + completeness per extension |
-| `metascrub/engines/` | exiftool, pdf (pikepdf), ooxml (zip), odf (zip), ole2 (olefile), av (ffmpeg) |
+| `metascrub/engines/` | exiftool, pdf (pikepdf), ooxml (zip), odf (zip), ole2 (olefile), av (ffmpeg), svg (XML text) |
 | `metascrub/gui.py` | Tkinter window; a view over MetadataScrubber, never a fork |
 | `metascrub/theme.py` | Windows 95 palette and its contrast floor |
 | `metascrub/selftest.py` | end-to-end proof for a new machine |
@@ -121,9 +130,9 @@ python -m metascrub doctor          # can the engines start
 python -m metascrub gui
 ```
 
-The 4 skips are intentional: .doc, .xls and .ppt are PARTIAL so they skip the
-COMPLETE-formats check, and one test of the missing-LibreOffice path skips where
-LibreOffice is present.
+The 5 skips are intentional: .doc, .xls, .ppt and .svg are PARTIAL so they skip
+the COMPLETE-formats check, and one test of the missing-LibreOffice path skips
+where LibreOffice is present.
 
 A pass count is an environment fact, not a gate. Compare TOTALS and FAILURES
 first, then read every skip reason with `-rs`. The same tree measured 291/5 on
@@ -164,7 +173,8 @@ See `tasks/todo.md`. The short version: no git remote yet, the parent project ad
 stated end state, and the `sh` launcher has never run on real macOS or Linux.
 OLE2 shipped on 2026-09-04 as PARTIAL; the Word SttbfAssoc and SttbSavedBy
 carriers are still untouched because no fixture here writes them.
-ODF shipped on 2026-09-04 as COMPLETE for all eight extensions. Flat XML
-OpenDocument (`.fodt` `.fods` `.fodp`) is in `DEFERRED` with a discharge
-condition, which is what made `DEFERRED` non-empty again; the four av
-extensions are still enforced by prose only and that is the AV team's item.
+ODF shipped on 2026-09-04 as COMPLETE for all eight extensions. SVG shipped
+the same day as PARTIAL; EXIF inside a base64-embedded raster and an external
+`file:///` reference both survive and are reported. Flat XML OpenDocument
+(`.fodt` `.fods` `.fodp`) and `.svgz` are in `DEFERRED`, each with a discharge
+condition. The four av extensions are NOT deferred any more: they shipped.

@@ -284,6 +284,127 @@ def make_odf_from_libreoffice(tmp_path, ext: str):
     path = str(tmp_path / f"lofixture{ext}")
     shutil.copyfile(_ODF_LO_CACHE[ext], path)
     assert zip_contains(path, value), f"{ext} LibreOffice fixture lost the sentinel"
+
+# SVG
+#
+# Hand-written, entirely here. SVG is text, so there is no external tool to
+# shell out to, nothing to skip and no platform variance. The one exception is
+# the embedded JPEG, which is built with Pillow and stamped through the same
+# exiftool session every other fixture uses.
+#
+# Every string in this builder is a RAW string. The export-filename carrier is
+# an absolute Windows path, and "C:\Users\..." in a normal Python literal is a
+# \U escape, which is a syntax error; "\bin" would silently become a backspace.
+# test_svg.py byte-scans the generated file for control characters so a future
+# edit cannot reintroduce that quietly.
+
+
+def _embedded_jpeg_data_uri(tmp_path, value: str) -> str:
+    """
+    A real JPEG carrying real EXIF, base64ed into a data: URI.
+
+    This is the fixture for the hole that makes SVG PARTIAL. The sentinel goes
+    in as Artist and Copyright, and a GPS coordinate goes in beside it, because
+    the point being tested is that an SVG can carry a camera's location while
+    every check this tool makes reports the file clean.
+    """
+    import base64
+
+    from PIL import Image
+
+    jpeg = str(tmp_path / "embedded.jpg")
+    Image.new("RGB", (32, 32), (10, 90, 160)).save(jpeg, format="JPEG")
+    _exiftool_write(jpeg, Artist=value, Copyright=value, GPSLatitude="40.7128")
+    if not raw_contains(jpeg, value):
+        pytest.skip("exiftool could not stamp the embedded JPEG; fixture unusable")
+    with open(jpeg, "rb") as fh:
+        encoded = base64.b64encode(fh.read()).decode("ascii")
+    os.unlink(jpeg)
+    return "data:image/jpeg;base64," + encoded
+
+
+def make_svg(tmp_path):
+    """
+    Return (path, sentinel) for an Inkscape-shaped SVG carrying every carrier
+    this engine handles, plus the two it deliberately does not.
+
+    The returned sentinel is the one that MUST be gone afterwards. The three
+    that must survive (body text, a nested accessibility title, the drawing
+    itself) and the two that are known to survive (the file:/// username and the
+    embedded JPEG's EXIF) carry their own distinct sentinels, so no assertion
+    can pass by accident on the wrong one.
+    """
+    path = str(tmp_path / "fixture.svg")
+    value = sentinel("svg")             # removed: docname, dc:*, comment, export path
+    user = sentinel("svguser")          # survives: inside a file:/// href
+    embedded = sentinel("svgembedded")  # survives: EXIF inside a base64 JPEG
+    body = sentinel("svgbody")          # must survive: <text> content
+    nested = sentinel("svgnested")      # must survive: a per-shape <title>
+
+    data_uri = _embedded_jpeg_data_uri(tmp_path, embedded)
+
+    text = "".join([
+        r'<?xml version="1.0" encoding="UTF-8" standalone="no"?>' "\n",
+        r'<!-- Created with Inkscape. ' + value + r' -->' "\n",
+        r'<svg' "\n",
+        r'   xmlns:dc="http://purl.org/dc/elements/1.1/"' "\n",
+        r'   xmlns:cc="http://creativecommons.org/ns#"' "\n",
+        r'   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"' "\n",
+        r'   xmlns="http://www.w3.org/2000/svg"' "\n",
+        r'   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.0.dtd"' "\n",
+        r'   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"' "\n",
+        r'   xmlns:xlink="http://www.w3.org/1999/xlink"' "\n",
+        r'   width="744" height="1052" viewBox="0 0 744 1052"' "\n",
+        r'   preserveAspectRatio="xMidYMid meet" version="1.1" id="svgroot"' "\n",
+        r'   sodipodi:docname="' + value + r'.svg"' "\n",
+        r'   inkscape:version="1.3.2 (091e20e, 2023-11-25)"' "\n",
+        # A raw string cannot END in a single backslash, and r'...\\' would put
+        # TWO of them in the path, which is a different path from the one under
+        # test. The separator is spliced in explicitly instead.
+        r'   inkscape:export-filename="C:\Users' + "\\" + value + r'\Desktop\out.png">' "\n",
+        r'  <title id="roottitle">' + value + r'</title>' "\n",
+        r'  <desc id="rootdesc">' + value + r'</desc>' "\n",
+        r'  <sodipodi:namedview id="namedview" pagecolor="#ffffff"' "\n",
+        r'     inkscape:zoom="0.35" inkscape:cx="372" inkscape:cy="526"' "\n",
+        r'     inkscape:window-x="120" inkscape:window-y="64"' "\n",
+        r'     inkscape:window-width="1920" inkscape:window-height="1017"' "\n",
+        r'     inkscape:current-layer="layer1" />' "\n",
+        r'  <metadata id="metadata7">' "\n",
+        r'    <rdf:RDF><cc:Work rdf:about="">' "\n",
+        r'      <dc:format>image/svg+xml</dc:format>' "\n",
+        r'      <dc:title>' + value + r'</dc:title>' "\n",
+        r'      <dc:creator><cc:Agent><dc:title>' + value + r'</dc:title></cc:Agent></dc:creator>' "\n",
+        r'      <dc:rights><cc:Agent><dc:title>' + value + r'</dc:title></cc:Agent></dc:rights>' "\n",
+        r'      <dc:description>' + value + r'</dc:description>' "\n",
+        r'      <dc:date>2026-09-04</dc:date>' "\n",
+        r'    </cc:Work></rdf:RDF>' "\n",
+        r'  </metadata>' "\n",
+        r'  <defs>' "\n",
+        r'    <linearGradient id="gradient3757">' "\n",
+        r'      <stop offset="0" stop-color="#ff0000"/><stop offset="1" stop-color="#0000ff"/>' "\n",
+        r'    </linearGradient>' "\n",
+        r'  </defs>' "\n",
+        r'  <style><![CDATA[ .keep { stroke: #00ff00; } ]]></style>' "\n",
+        r'  <g inkscape:label="Layer 1" inkscape:groupmode="layer" id="layer1">' "\n",
+        r'    <title id="shapetitle">' + nested + r'</title>' "\n",
+        r'    <rect id="rect1" class="keep" x="10" y="10" width="100" height="50"' "\n",
+        r'       style="fill:url(#gradient3757)" sodipodi:nodetypes="cccc" />' "\n",
+        r'    <use id="use1" xlink:href="#rect1" transform="translate(0,80)" />' "\n",
+        r'    <text id="text1" x="20" y="200">' + body + r'</text>' "\n",
+        r'    <image id="linked" x="0" y="300" width="64" height="64"' "\n",
+        r'       sodipodi:absref="C:\Users' + "\\" + user + r'\Pictures\logo.png"' "\n",
+        r'       xlink:href="file:///C:/Users/' + user + r'/Pictures/logo.png" />' "\n",
+        r'    <image id="embedded" x="0" y="400" width="32" height="32"' "\n",
+        r'       xlink:href="' + data_uri + r'" />' "\n",
+        r'  </g>' "\n",
+        r'</svg>' "\n",
+    ])
+    # newline="" so a Windows run does not rewrite every line ending in the
+    # fixture and hand the line-ending test a file that was never LF-only.
+    with open(path, "w", encoding="utf-8", newline="") as fh:
+        fh.write(text)
+
+    assert raw_contains(path, value), "svg fixture did not store the sentinel"
     return path, value
 
 
@@ -430,6 +551,8 @@ def build(kind: str, tmp_path):
             return make_image(tmp_path, ext, fmt)
     if kind == ".pdf":
         return make_pdf(tmp_path)
+    if kind == ".svg":
+        return make_svg(tmp_path)
     if kind == ".docx":
         return make_docx(tmp_path)
     if kind == ".xlsx":
@@ -462,7 +585,7 @@ def build(kind: str, tmp_path):
 # Every format the cross-product tests must cover. A format handled by the
 # capability table but absent here is caught by test_coverage.py.
 ALL_KINDS = [ext for ext, _ in IMAGE_FORMATS] + [
-    ".pdf", ".docx", ".xlsx", ".pptx", ".doc", ".xls", ".ppt",
+    ".pdf", ".svg", ".docx", ".xlsx", ".pptx", ".doc", ".xls", ".ppt",
     ".mp4", ".mkv", ".mp3", ".flac",
     # OpenDocument. All eight get a real fixture rather than a proxy: the
     # builder is stdlib-only, so a template costs the same as a document and a

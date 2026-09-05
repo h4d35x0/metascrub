@@ -28,6 +28,7 @@ class Engine(str, Enum):
     ODF = "odf"             # zip container rewrite (odt/ods/odp/odg + templates)
     OLE2 = "ole2"           # legacy compound-file property streams
     AV = "av"               # ffmpeg remux, stream copy
+    SVG = "svg"             # XML text rewrite; exiftool cannot write SVG at all
 
 
 class Completeness(str, Enum):
@@ -336,8 +337,68 @@ _AV: Dict[str, FormatSpec] = {
                 ".qt", ".mqv", ".lrv", ".f4a")
 }
 
+# ---------------------------------------------------------------------------
+# TIER 6: SVG. Begin SVG block.
+#
+# exiftool cannot write SVG at all. Measured 2026-09-04 with exiftool 13.29:
+# SVG is absent from `-listwf`, and `exiftool -all= -overwrite_original` answers
+# "ExifTool does not yet support writing of SVG images" and exits 1. It READS
+# SVG usefully, so the baseline and the verification still come from exiftool
+# while svg_engine.py does the writing.
+#
+# PARTIAL, and the note says exactly what remains. Both survivors were measured
+# rather than assumed, and both are invisible to the two checks this tool makes:
+#
+#   base64-embedded rasters   a 32x32 JPEG carrying Artist and GPSLatitude was
+#       base64ed into an <image> data: URI. exiftool reported only Xmlns,
+#       ImageWidth, ImageHeight and ViewBox on the wrapping SVG, so there was no
+#       needle, and the value is not findable in the raw bytes because it is
+#       base64-wrapped, so the residual scan cannot see it either. The file
+#       would report VERIFIED_CLEAN while carrying a photographer's name and
+#       coordinates. Removing it would delete the picture.
+#
+#   external local references  an xlink:href of file:///C:/Users/<name>/... is
+#       not read by exiftool and is not removed, because removing it deletes the
+#       image from the drawing. It is reported as a note instead.
+#
+# .svgz is deliberately absent. It is gzipped SVG, so Container.RAW scanning
+# would be blind to every byte of it, and shipping a format whose residual scan
+# silently cannot see anything is worse than not shipping it. It needs its own
+# Container value so searchable_bytes() decompresses first, which is a verify.py
+# change of the same shape as the existing ZIP branch.
+_SVG_NOTE = ("XML comments, the <metadata> RDF block, editor state and "
+             "editor-private sodipodi/inkscape/ooo attributes are removed; "
+             "EXIF inside base64-embedded raster images, external local "
+             "file references, and -inkscape-* CSS properties inside style "
+             "attributes survive and are reported")
+_SVG: Dict[str, FormatSpec] = {
+    ".svg": FormatSpec(Engine.SVG, Completeness.PARTIAL, Container.RAW, True, _SVG_NOTE),
+}
+
+# .svgz is DEFERRED rather than merely absent, so a user is told why instead of
+# getting the same flat "unsupported" a .txt file gets, and so the gates in
+# tests/test_coverage_gate.py collect it. This project's rule is that a deferral
+# is enforced by a test, not by memory.
+#
+# Written as an update rather than as an entry in the DEFERRED literal above so
+# that the three engine branches in flight can each add their own deferrals
+# without colliding on one dict.
+DEFERRED.update({
+    ".svgz": (
+        "gzipped SVG. The engine would be a one-line gzip wrapper, but "
+        "Container.RAW makes the residual scan search the compressed bytes, "
+        "where it can see nothing at all, so the format would verify clean "
+        "unconditionally. Discharge condition: a Container value whose "
+        "searchable_bytes() branch decompresses first, of the same shape as "
+        "the existing ZIP branch, plus a fixture whose sentinel is found "
+        "before the scrub and absent after."
+    ),
+})
+# End SVG block.
+# ---------------------------------------------------------------------------
+
 CAPABILITIES: Dict[str, FormatSpec] = {}
-for _table in (_IMAGE, _PDF, _OOXML, _ODF, _OLE2, _AV):
+for _table in (_IMAGE, _PDF, _OOXML, _ODF, _OLE2, _AV, _SVG):
     CAPABILITIES.update(_table)
 
 

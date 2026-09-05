@@ -12,6 +12,7 @@ from .odf_engine import OdfEngine
 from .ole2_engine import Ole2Engine
 from .ooxml_engine import OoxmlEngine
 from .pdf_engine import PdfEngine
+from .svg_engine import SvgEngine
 
 _REGISTRY: Dict[Engine, BaseEngine] = {
     Engine.EXIFTOOL: ExifToolEngine(),
@@ -20,6 +21,7 @@ _REGISTRY: Dict[Engine, BaseEngine] = {
     Engine.ODF: OdfEngine(),
     Engine.OLE2: Ole2Engine(),
     Engine.AV: AvEngine(),
+    Engine.SVG: SvgEngine(),
 }
 
 
