@@ -5,7 +5,7 @@ removal actually happened** instead of assuming it did.
 
 Built on the `ExifSanitizer` from `the parent project` (`cli/sanitizer.py`), which
 handled eight image extensions through one engine. This extends that to five
-engines across 58 extensions, and replaces "no exception was raised" with
+engines across 62 extensions, and replaces "no exception was raised" with
 measured verification.
 
 ---
@@ -352,8 +352,8 @@ position cannot be read is worse than an ugly one.
 | PDF | pdf | pikepdf full rewrite | complete |
 | Office | docx docm xlsx xlsm pptx pptm | zip rebuild | complete |
 | Legacy Office | doc xls ppt | olefile stream rewrite | **partial**, the applications keep second copies |
-| Video | mp4 m4v mov mkv webm avi f4v m4b ts m2ts | ffmpeg remux | complete |
-| Audio | mp3 m4a flac wav ogg opus aiff aif | ffmpeg remux | complete |
+| Video | mp4 m4v mov qt mqv lrv mkv webm avi f4v m4b ts m2ts | ffmpeg remux | complete |
+| Audio | mp3 m4a f4a flac wav ogg opus aiff aif | ffmpeg remux | complete |
 
 `complete` and `partial` are separate states carried in every result, because
 "we support this format" and "we can fully clean this format" are different
@@ -361,12 +361,15 @@ promises. A partial result always says so.
 
 ### Not handled, and why
 
-- **The deferred formats are `.qt`, `.mqv`, `.lrv` and `.f4a`**, listed in
-  `DEFERRED` in `metascrub/capabilities.py` and detailed at the end of this
-  section. `.doc`, `.xls` and `.ppt` were deferred until 2026-09-04; they now
-  ship as PARTIAL, and *Legacy Office, and what it does not promise* below says
-  what survives. `tests/test_coverage_gate.py` enforces the mechanism, so a
-  deferral cannot be discharged by forgetting it.
+- **Nothing is deferred at the moment.** `.qt`, `.mqv`, `.lrv` and `.f4a` were
+  until 2026-09-04 and now ship; `.doc`, `.xls` and `.ppt` were, and now ship
+  as PARTIAL, with *Legacy Office, and what it does not promise* below saying
+  what survives. The `DEFERRED` table in `metascrub/capabilities.py` is what
+  the gates in `tests/test_coverage_gate.py` read, and those gates are
+  exercised against synthetic tables so they keep their teeth while it is
+  empty. An earlier version of this file described four formats as deferred
+  while that table held nothing, which is precisely how a deferral gets
+  discharged by being forgotten.
 - **`.bmp`** is absent because exiftool 13.29 answers *"Writing of BMP files is
   not yet supported"*. Listing a format the tool cannot write would be a promise
   it cannot keep.
@@ -386,16 +389,30 @@ promises. A partial result always says so.
 - **`.aac` and `.ac3`** are raw bitstreams with no metadata container. ffmpeg
   accepts `-metadata` and stores nothing, so there is no fixture to build and
   nothing to remove.
-- **`.qt`, `.mqv`, `.lrv`, `.f4a`** are deferred, not refused. ffmpeg muxes them
-  when told the format explicitly, but the av engine names its temporary file
-  with the target extension and lets ffmpeg infer the muxer, and ffmpeg binds no
-  output muxer to those extensions (`Error opening output files: Invalid
-  argument`). They need an explicit extension-to-muxer map in the engine.
-  **Discharge condition:** they move into the table when `av_engine.py` selects
-  the output format explicitly and a fixture for each passes the byte search.
+- **`.qt`, `.mqv`, `.lrv` and `.f4a` now ship**, added 2026-09-04. ffmpeg binds
+  no output muxer to these four extensions, so the remux failed with
+  `Error opening output files: Invalid argument` before it started, and the av
+  engine now names the output format explicitly. Which format is read out of
+  the input file rather than looked up from the extension: all four name ISO
+  base media files in two incompatible flavours, QuickTime and ISO/MP4, and the
+  extension does not tell you which. Measured across all eight
+  extension/flavour combinations, a lookup keyed on extension alone silently
+  handed back four of them in the other flavour, so the engine matches the
+  input's `ftyp` brand and the extension is only the fallback for a file that
+  carries no `ftyp` box at all. See *What the remux does not preserve* below.
 - **Tracked changes and comments** in Office documents are detected and
   **reported, not removed**. They are user-visible content, not metadata, and
   deleting them silently would destroy work.
+
+### What the remux does not preserve
+
+The ffmpeg remux keeps the container's flavour: a QuickTime file comes back
+QuickTime, an ISO/MP4 file comes back ISO/MP4. It does not keep the exact
+`ftyp` major brand within the ISO family. ffmpeg's mp4 muxer writes `isom`
+whatever it read, so an `mp41` input comes back as `isom`. Measured
+2026-09-04; this is not new, it is what every MP4-family format here has always
+done, and it is recorded because "the container is unchanged" would be a
+stronger claim than the tool can make.
 
 ### Legacy Office, and what it does not promise
 

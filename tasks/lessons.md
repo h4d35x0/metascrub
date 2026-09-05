@@ -4,6 +4,44 @@ Corrections and the patterns that prevent repeating them. Newest first.
 
 ---
 
+## 2026-09-04 - A round trip that passes can still hand back a different file
+
+The AV work was specified as an extension-to-muxer map: `-f mov` for `.qt` and
+`.mqv`, `-f mp4` for `.lrv` and `.f4a`. Built exactly that, and all four
+extensions passed everything the project asks for. The sentinel left the bytes,
+ffprobe parsed the output, the verifier agreed.
+
+Then the cross product. All four of these extensions name ISO base media files
+in two incompatible flavours, QuickTime (`ftyp` brand `qt  `) and ISO/MP4, and
+the extension does not decide which one a given file is. Feeding the engine
+both flavours of each extension, eight cases, **four came back in the other
+flavour**. A `.lrv` that was QuickTime going in was ISO/MP4 coming out. Every
+other assertion still passed, because a converted file is still clean, still
+parses, and still has the right name.
+
+The fixtures could not see it. They were built by the same map the engine used,
+so the engine was only ever handed the flavour it already expected. A test
+built from the implementation's own assumption confirms the assumption.
+
+The fix was to read the flavour out of the input's `ftyp` brand and match it,
+leaving the extension map as the fallback for a file with no `ftyp` box. All
+eight then round trip as themselves.
+
+**Pattern:** when a function's behaviour is keyed on a NAME, ask what happens
+when the name and the content disagree, and build the disagreeing case. And
+when a fixture and the code under test both consult the same table, the test
+cannot fail for the reason the table is wrong. Give the test its own statement
+of the truth, then assert the two agree, rather than deriving one from the
+other.
+
+Second, smaller one from the same change: the flag had to be added to two
+command lines, `strip_all` and `_retry_without_bitexact`. The retry path only
+runs when a muxer rejects `-bitexact`, so a miss there would surface as a
+corrupt-looking failure on a rare subset of files. Capturing argv and asserting
+on both was cheap; noticing that path months later would not have been.
+
+---
+
 ## 2026-09-04 - The deferral mechanism was built, and then not used
 
 `.qt`, `.mqv`, `.lrv` and `.f4a` are described as deferred in `tasks/todo.md`,

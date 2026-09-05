@@ -65,6 +65,15 @@ embeds a unique sentinel and the assertion searches the bytes for it.
 7. **PDF is never scrubbed with exiftool.** Use the pikepdf full-rewrite engine.
    See trap 0 above for why.
 
+8. **A container's extension does not tell you which container it is.** `.qt`,
+   `.mqv`, `.lrv` and `.f4a` are all ISO base media, in two incompatible
+   flavours: QuickTime (`ftyp` brand `qt  `) and ISO/MP4. Measured 2026-09-04,
+   a static extension-to-muxer map returned four of the eight
+   extension/flavour combinations in the OTHER flavour, silently, while the
+   sentinel search, ffprobe and the verifier all still passed. `av_engine.py`
+   reads the input's brand and matches it. When behaviour is keyed on a name,
+   build the case where the name and the content disagree.
+
 ---
 
 ## Layout
@@ -89,7 +98,7 @@ embeds a unique sentinel and the assertion searches the bytes for it.
 ## Commands
 
 ```bash
-python -m pytest tests/ -q          # 292 passed, 4 skipped as of 2026-09-04
+python -m pytest tests/ -q          # 379 passed, 4 skipped, dev machine, 2026-09-04
 python -m metascrub selftest        # end-to-end, including a real round trip
 python -m metascrub doctor          # can the engines start
 python -m metascrub gui
@@ -99,9 +108,13 @@ The 4 skips are intentional: .doc, .xls and .ppt are PARTIAL so they skip the
 COMPLETE-formats check, and one test of the missing-LibreOffice path skips where
 LibreOffice is present.
 
-**exiftool on this machine** lives at
-`C:\Users\user\AppData\Local\Programs\ExifTool\` and may not be on
-the PATH of a shell started before it was installed.
+A pass count is an environment fact, not a gate. Compare TOTALS and FAILURES
+first, then read every skip reason with `-rs`. The same tree measured 291/5 on
+a machine without `tkinterdnd2`, which is not a regression.
+
+**exiftool on the dev machine** is 13.29 at `C:\Tools\exiftool-13.29_64\` and IS on the
+default PATH. Verified 2026-09-04; the `C:\Users\user\...` path this
+file used to name does not exist on this machine at all.
 
 ---
 
@@ -110,9 +123,13 @@ the PATH of a shell started before it was installed.
 - **`Completeness.PARTIAL` is a real state and must stay separate from
   COMPLETE.** "We support this format" and "we can fully clean it" are
   different promises. Raw formats are PARTIAL because maker notes survive.
-- **A deferral must be enforced by a test, not by memory.** OLE2 was deferred
-  and `tests/test_coverage_gate.py` collected it on 2026-09-04. DEFERRED is
-  empty now; the mechanism stays for the next one.
+- **A deferral must be enforced by a test, not by memory, and the last step of
+  writing one is opening `DEFERRED` to confirm the entry is IN it.** Four AV
+  containers were called deferred in three documents while `DEFERRED` was `{}`,
+  which made three gates iterate nothing and pass having asserted nothing. The
+  gates are now functions over a table, exercised against synthetic tables, so
+  an empty `DEFERRED` no longer disables them. `DEFERRED` is empty again as of
+  2026-09-04, and that is now a measured state rather than a silent one.
 - **Never overwrite an existing `<file>.backup`.** It is the only remaining copy
   of the pre-sanitize original.
 - **The GUI is a view over `MetadataScrubber`, never a second implementation.**

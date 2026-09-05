@@ -227,15 +227,16 @@ _OLE2: Dict[str, FormatSpec] = {
 # "Unable to choose an output format" / "Error opening output files: Invalid
 # argument". av_engine.py names its temp file with the target extension and
 # lets ffmpeg infer the muxer, so these cannot round trip through it yet.
-_AV_MUXER_DEFERRAL = ("ffmpeg binds no output muxer to this extension, so the "
-                      "av engine's temp file cannot be written; needs an "
-                      "explicit extension-to-muxer map in av_engine.py")
-DEFERRED: Dict[str, str] = {
-    ".qt": _AV_MUXER_DEFERRAL + " (-f mov)",
-    ".mqv": _AV_MUXER_DEFERRAL + " (-f mov)",
-    ".lrv": _AV_MUXER_DEFERRAL + " (-f mp4)",
-    ".f4a": _AV_MUXER_DEFERRAL + " (-f mp4)",
-}
+# Nothing is deferred at the moment. `.qt`, `.mqv`, `.lrv` and `.f4a` were,
+# until av_engine.MUXER_FOR_EXT shipped on 2026-09-04 and each of the four
+# passed the sentinel byte search; they are in the AV tier below now.
+#
+# The gates in tests/test_coverage_gate.py do NOT lose their teeth while this
+# is empty. They are written as functions over a table and are exercised
+# against synthetic tables, so the mechanism is proven whether or not anything
+# is deferred today. That was the 2026-09-04 audit finding: an empty table used
+# to make three gates pass having asserted nothing at all.
+DEFERRED: Dict[str, str] = {}
 
 # TIER 5: audio and video. ffmpeg remux, not exiftool.
 _AV_NOTE = "container, per-stream and chapter metadata; remux without re-encoding"
@@ -259,7 +260,14 @@ _AV: Dict[str, FormatSpec] = {
     ext: FormatSpec(Engine.AV, Completeness.COMPLETE, Container.RAW, True, _AV_NOTE)
     for ext in (".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi",
                 ".m4a", ".mp3", ".flac", ".wav", ".ogg", ".opus",
-                ".f4v", ".m4b", ".ts", ".m2ts", ".aiff", ".aif")
+                ".f4v", ".m4b", ".ts", ".m2ts", ".aiff", ".aif",
+                # Shipped 2026-09-04 with av_engine.MUXER_FOR_EXT. Each was
+                # measured end to end and separately: a fixture that really
+                # stored the sentinel, the sentinel gone from the output bytes
+                # afterwards, ffprobe still parsing the result, and the ftyp
+                # brand unchanged, so the remux is not quietly converting the
+                # container to a different one.
+                ".qt", ".mqv", ".lrv", ".f4a")
 }
 
 CAPABILITIES: Dict[str, FormatSpec] = {}
