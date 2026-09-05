@@ -385,11 +385,10 @@ def test_an_svg_with_nothing_to_remove_is_left_byte_identical(tmp_path):
     assert result["verification"]["verdict"] == "verified_clean"
 
 
-def test_a_malformed_svg_is_reported_clean_while_still_carrying_metadata(tmp_path):
+def test_a_malformed_svg_is_refused_rather_than_reported_clean(tmp_path):
     """
-    KNOWN DEFECT, pinned here so it cannot be lost. This test asserts the
-    CURRENT behaviour, and it is expected to FAIL and be rewritten when the
-    defect is fixed. That is what it is for.
+    Was a pinned DEFECT here, asserting the wrong behaviour on purpose. Fixed
+    2026-09-04 on fix/unparseable-reported-clean; this now asserts the fix.
 
     Measured 2026-09-04, exiftool 13.29, on a truncated SVG carrying
     sodipodi:docname:
@@ -399,20 +398,22 @@ def test_a_malformed_svg_is_reported_clean_while_still_carrying_metadata(tmp_pat
         (no [SVG] tags at all)
 
     exiftool identifies the file, does not fail, and surfaces zero SVG tags.
-    Everything it emits sits in the File and ExifTool pseudo-groups, so
-    _real_tags() is empty and MetadataScrubber.sanitize_file() takes its
-    STATUS_CLEAN short circuit BEFORE any engine runs. The user is told "no
+    Everything it emits sat in the File and ExifTool pseudo-groups, so
+    _real_tags() was empty and MetadataScrubber.sanitize_file() took its
+    STATUS_CLEAN short circuit BEFORE any engine ran. The user was told "no
     metadata carriers found" about a file that carries an editor's docname.
 
-    This is not the fail-open that MetadataRead fixed: the read genuinely
-    succeeded. It is the orchestrator treating "the reader found nothing" and
-    "there is nothing" as the same state when the reader also raised a warning
-    that it could not parse the document.
+    That was never the fail-open MetadataRead fixed: the read genuinely
+    succeeded. It was the orchestrator treating "the reader found nothing" and
+    "there is nothing" as the same state when the reader had also said it could
+    not parse the document. ExifSession.read() now returns
+    ReadOutcome.UNPARSED for that, and an unparseable baseline is an ERROR for
+    the same reason an unreadable one is: it gives verify.py no needles, so
+    anything the engine did afterwards would be unverifiable.
 
-    It is not fixed here because the fix belongs in scrubber.py and changes
-    behaviour for EVERY format, which is not this branch's to decide. It cannot
-    be reached by a well-formed SVG: any SVG that parses reports at least
-    SVG:Xmlns, so _real_tags() is never empty. See tasks/todo.md.
+    The orchestrator-level cross-product, both populations and every format,
+    lives in tests/test_unparseable.py. This one stays here because it is the
+    file the defect was found on and it must never come back on SVG.
     """
     path = str(tmp_path / "truncated.svg")
     value = sentinel("svgtruncated")
@@ -428,15 +429,16 @@ def test_a_malformed_svg_is_reported_clean_while_still_carrying_metadata(tmp_pat
 
     result = _scrub(path)
 
-    assert result["status"] == "clean"
-    assert result["detail"] == "no metadata carriers found"
-    # The file is at least not damaged, which is the part that must never
-    # regress even while the verdict above is wrong.
+    assert result["status"] == STATUS_ERROR, result
+    assert "could not parse" in result["error"]
+    # Never a claim that anything was done to it.
+    assert result["removed_fields"] == []
+    assert "verification" not in result
+    # A refusal must leave the file exactly as it was. The sentinel is still
+    # there, and that is honest: we said we could not clean it.
     with open(path, "rb") as fh:
         assert fh.read() == original
-    assert raw_contains(path, value), (
-        "the defect this test pins is gone; rewrite it to assert the fix"
-    )
+    assert raw_contains(path, value)
 
 
 def test_line_endings_are_not_rewritten(tmp_path):
