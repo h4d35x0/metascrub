@@ -442,11 +442,21 @@ used to contain.
 is the only instrument that works at all.** The original text called the
 byte search a co-equal check. Three measurements say otherwise:
 
-1. **GPS coordinates can never be needles.** `verify.meaningful_values()`
-   drops them via the pure-digits-and-separators filter, even though
-   exiftool returns `Composite:GPSPosition` as a 22-character string. For a
-   photo scrubber this is the single most important value in the file, and it
-   is recorded as a known limit in the 1.0.2 entry in `CHANGELOG.md`.
+1. **GPS coordinates can never be needles, and no needle could work.**
+   Corrected 2026-09-06 after measurement: an earlier version of this line
+   blamed the pure-digits-and-separators filter and called
+   `Composite:GPSPosition` a 22-character string. Both were wrong. The string
+   is 20 characters, and the digits filter drops zero GPS tags. The real
+   mechanisms are `_PSEUDO_GROUPS`, which excludes the whole `Composite`
+   group, and `_flatten()`, which returns an empty list for any value that is
+   not a string or list: reading exiftool with `-n` returns floats, so
+   `EXIF:GPSLatitude` never reaches a filter at all.
+
+   More fundamentally, EXIF stores coordinates as rationals
+   (`43/1 39/1 14517/1250`), so the decimal form is not in the bytes and a
+   byte search for it cannot succeed regardless of filtering. For a photo
+   scrubber this is the single most important value in the file. See
+   `docs/D2-GPS-VERIFICATION.md` for the measured analysis and the plan.
 2. **Compressed carriers are invisible to a byte search by construction.** A
    sentinel inside a PNG `zTXt` is not present in the file's bytes at all.
 3. **Trailers and unknown chunks are invisible to exiftool**, so no needle is

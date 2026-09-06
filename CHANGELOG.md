@@ -56,11 +56,24 @@ files may have carried data the tool could not see and did not report.
 
 ### Known limits, stated rather than left implicit
 
-- The residual byte scan cannot see GPS coordinates. `meaningful_values()`
-  discards them through its pure-digits-and-separators filter even though
-  exiftool reports them. The engines do remove GPS, so this is a gap in what
-  the tool can PROVE rather than a leak, but it is a real gap and it is
-  stated here rather than left for someone to discover.
+- The residual byte scan cannot see GPS coordinates, and no needle-based scan
+  ever could. EXIF stores a coordinate as rationals (`43/1 39/1 14517/1250`),
+  so the decimal string exiftool prints is not present in the file at all:
+  searching the output bytes for `43.653226` finds nothing even in a file that
+  plainly carries that coordinate. The engines do remove GPS, so this is a gap
+  in what the tool can PROVE rather than a leak.
+
+  Two mechanisms discard the values before any search happens, and neither is
+  the digits filter (an earlier draft of this entry said it was, wrongly):
+  `Composite:GPSPosition` is excluded by `_PSEUDO_GROUPS`, and
+  `EXIF:GPSLatitude` and friends never reach a filter at all because exiftool
+  is read with `-n`, which returns floats, and `_flatten()` returns an empty
+  list for any value that is not a string or list. That second mechanism is
+  much broader than GPS: measured on one geotagged JPEG, 9 of 14 non-pseudo
+  tag values are discarded for being numeric.
+
+  The fix is structural rather than needle-based. See
+  `docs/D2-GPS-VERIFICATION.md`.
 - The residual byte scan cannot see any compressed carrier. A value inside a
   PNG `zTXt` is not present in the file's bytes at all, so searching for it
   finds nothing whether or not the chunk survived.
