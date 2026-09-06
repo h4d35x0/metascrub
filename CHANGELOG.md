@@ -12,6 +12,61 @@ Versions follow [semantic versioning](https://semver.org/). The PyPI package is
 
 ---
 
+## [1.0.2] - 2026-09-06
+
+**If you scrubbed a `.png`, `.webp` or `.gif` with any earlier version and you
+relied on the "verified clean" verdict, re-scrub it with this one.** Those
+files may have carried data the tool could not see and did not report.
+
+### Fixed
+
+- **A `.webp`, `.png` or `.gif` could carry an arbitrary hidden payload past a
+  "verified clean" verdict.** Measured on 1.0.1: a WebP holding an 8 KB MP4
+  inside an unknown `MPVD` RIFF chunk was reported `SANITIZED ... verified
+  clean` while the video and its `ftyp` header survived intact in the output.
+  The same shape was then measured for an unknown PNG ancillary chunk and for
+  data appended after a GIF trailer. Three formats, three false CLEAN verdicts.
+
+  The engine was not at fault; exiftool removed everything it could see. The
+  fault was in verification. `verify.py` searches the output for values that a
+  baseline read captured beforehand, so a carrier exiftool never parses yields
+  no values, yields no needles, and the scan passes having searched for
+  nothing. The verdict's confidence exceeded the question that was asked.
+
+  A new structural scan (`metascrub/structure.py`) asks a question that does
+  not depend on the baseline read: after scrubbing, is there any region of the
+  file that the format's own structure does not account for? PNG, WebP and GIF
+  are walked chunk by chunk and block by block, and any unknown structure or
+  trailing region is reported as the new verdict `structure_unaccounted`.
+
+  **This release reports the problem and fails closed; it does not remove
+  these carriers.** A file with an unexplained region is one this tool cannot
+  currently clean, and saying so is the honest outcome. Removal needs a
+  container rewriter per format and is deliberately not being rushed into a
+  patch release.
+
+  Formats other than PNG, WebP and GIF are unchanged: a format with no
+  registered walker reports "not applicable", which is held distinct from
+  "clean" for the same reason `ReadOutcome` distinguishes them in `exif_io.py`.
+
+  Measured as NOT affected, and left alone: an unknown JPEG `APP9` segment, and
+  trailing data appended to a JPEG, PNG or TIFF, are all removed correctly.
+  Data past a WebP's declared RIFF size and a malformed GIF extension already
+  failed closed before this change.
+
+### Known limits, stated rather than left implicit
+
+- The residual byte scan cannot see GPS coordinates. `meaningful_values()`
+  discards them through its pure-digits-and-separators filter even though
+  exiftool reports them. The engines do remove GPS, so this is a gap in what
+  the tool can PROVE rather than a leak, but it is a real gap and it is
+  stated here rather than left for someone to discover.
+- The residual byte scan cannot see any compressed carrier. A value inside a
+  PNG `zTXt` is not present in the file's bytes at all, so searching for it
+  finds nothing whether or not the chunk survived.
+
+---
+
 ## [1.0.1] - 2026-09-05
 
 **If you scrubbed an Office document with 1.0.0, upgrade and scrub it again.**

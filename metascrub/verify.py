@@ -35,6 +35,7 @@ from enum import Enum
 from typing import Dict, List, Optional, Sequence, Set
 
 from .capabilities import Container, FormatSpec
+from .structure import scan as structure_scan
 
 # exiftool reports filesystem facts and derived values under these groups. They
 # are not stored metadata, so they must never become residual-scan needles: the
@@ -172,6 +173,12 @@ class Verdict(str, Enum):
     RESIDUAL_FOUND = "residual_found"      # values survived; the file still leaks
     CARRIERS_REMAIN = "carriers_remain"    # engine read-back still reports tags
     UNVERIFIED = "unverified"              # verification could not run
+    # A region of the output that the format's own structure does not account
+    # for. Distinct from RESIDUAL_FOUND on purpose: there, a value we captured
+    # survived; here, we cannot say what the bytes are, only that nothing
+    # explains them. Both mean the file is not clean, and the difference is
+    # exactly what the operator needs in order to act.
+    STRUCTURE_UNACCOUNTED = "structure_unaccounted"
 
 
 @dataclass
@@ -181,6 +188,7 @@ class Verification:
     remaining_tags: List[str] = field(default_factory=list)
     checked_values: int = 0
     detail: str = ""
+    unaccounted_regions: List[str] = field(default_factory=list)
 
     @property
     def clean(self) -> bool:
@@ -194,6 +202,7 @@ class Verification:
             "remaining_tags": self.remaining_tags,
             "checked_values": self.checked_values,
             "detail": self.detail,
+            "unaccounted_regions": self.unaccounted_regions,
         }
 
 
@@ -430,6 +439,33 @@ def verify(
             remaining_tags=remaining,
             checked_values=len(needles),
             detail=f"{len(survivors)} metadata value(s) still present in the output bytes",
+        )
+
+    # The residual scan can only look for values a baseline read produced, so a
+    # carrier exiftool never parsed contributes no needles and the scan above
+    # passes having searched for nothing. Measured 2026-09-06 on the shipped
+    # 1.0.1: an unknown WebP RIFF chunk, an unknown PNG ancillary chunk, and
+    # data appended after a GIF trailer each rode through a SANITIZED file that
+    # reported "verified clean". This check asks the question that does not
+    # depend on the baseline read: is there a region the format cannot explain?
+    structure = structure_scan(path)
+    if structure.error:
+        return Verification(
+            verdict=Verdict.UNVERIFIED,
+            checked_values=len(needles),
+            remaining_tags=remaining,
+            detail=f"the output could not be structurally parsed: {structure.error}",
+        )
+    if structure.unaccounted:
+        return Verification(
+            verdict=Verdict.STRUCTURE_UNACCOUNTED,
+            checked_values=len(needles),
+            remaining_tags=remaining,
+            unaccounted_regions=structure.unaccounted,
+            detail=(
+                f"{len(structure.unaccounted)} region(s) of the output are not "
+                "accounted for by the format's structure and may carry anything"
+            ),
         )
 
     if not after_readable:

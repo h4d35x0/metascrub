@@ -143,7 +143,7 @@ embeds a unique sentinel and the assertion searches the bytes for it.
 ## Commands
 
 ```bash
-python -m pytest tests/ -q          # 899 passed, 5 skipped, dev machine, 2026-09-05
+python -m pytest tests/ -q          # 986 passed, 5 skipped, dev machine, 2026-09-06
 python -m metascrub selftest        # end-to-end, including a real round trip
 python -m metascrub doctor          # can the engines start
 python -m metascrub gui
@@ -151,8 +151,11 @@ python -m metascrub gui
 
 The 5 skips are intentional: .doc, .xls, .ppt and .svg are PARTIAL so they skip
 the COMPLETE-formats check, and one test of the missing-LibreOffice path skips
-where LibreOffice is present. Measured on the dev machine 2026-09-04 after the
-unparseable-baseline fix: 899 passed, 5 skipped, about 4m30s.
+where LibreOffice is present. Measured on the dev machine 2026-09-06 after the
+structural-scan fix: 986 passed, 5 skipped, 5m46s. The 899 figure this file
+carried until then was stale: three commits added tests after it was written,
+and the count is an environment fact rather than a gate. Compare TOTALS and
+FAILURES, then read every skip reason with `-rs`.
 
 A pass count is an environment fact, not a gate. Compare TOTALS and FAILURES
 first, then read every skip reason with `-rs`. The same tree measured 291/5 on

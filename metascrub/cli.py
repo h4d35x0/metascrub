@@ -91,6 +91,12 @@ def _print_result(result: Dict) -> None:
         for value in values[:5]:
             print(_c(f"        {value[:70]}", RED))
 
+    if verification.get("verdict") == "structure_unaccounted":
+        regions = verification.get("unaccounted_regions", [])
+        print(_c(f"      UNEXPLAINED DATA in the output: {len(regions)} region(s)", RED))
+        for region in regions[:5]:
+            print(_c(f"        {region[:70]}", RED))
+
     if result.get("error"):
         print(_c(f"      {result['error']}", RED))
     if result.get("detail") and status in (STATUS_DEFERRED, STATUS_UNSUPPORTED):

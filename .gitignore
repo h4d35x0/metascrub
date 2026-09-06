@@ -37,3 +37,10 @@ Thumbs.db
 
 # Agent worktrees created by the harness
 .claude/
+
+# The working TODO stays private, and this entry is the guard that keeps it
+# that way. CLAUDE.md instructs every session to write its plan to
+# tasks/todo.md, so without this line the next session recreates the file and
+# the one after that commits it. The backlog names unreleased defects and
+# planned work; tasks/lessons.md is the public half and stays tracked.
+tasks/todo.md

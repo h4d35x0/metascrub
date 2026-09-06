@@ -98,6 +98,13 @@ def _verdict_text(result: Dict) -> str:
     if verdict == "residual_found":
         count = len(verification.get("residual_values", []))
         return f"STILL LEAKING ({count})"
+    if verdict == "structure_unaccounted":
+        # Deliberately not folded into "not verified". That phrase means the
+        # check did not run; this means it ran and found a region of the file
+        # that nothing explains, which is a stronger and more actionable claim.
+        # Per trap 6 the distinction lives in the text, never in colour alone.
+        count = len(verification.get("unaccounted_regions", []))
+        return f"UNEXPLAINED DATA ({count})"
     if verdict == "carriers_remain":
         return "carriers remain"
     return "not verified"
