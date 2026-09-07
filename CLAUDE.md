@@ -157,7 +157,9 @@ it never counts as verified. See the decision block in `verify.py` and
 ## Commands
 
 ```bash
-python -m pytest tests/ -q          # 1541 passed, 5 skipped, dev machine, 2026-09-07
+# 1541 passed, 5 skipped, dev machine, 2026-09-07. Set the corpus variable:
+# 26 of those tests are HEIC tests that SKIP without it, silently and greenly.
+METASCRUB_DEVICE_CORPUS=<the local device corpus> python -m pytest tests/ -q
 python -m metascrub selftest        # end-to-end, including a real round trip
 python -m metascrub doctor          # can the engines start
 python -m metascrub gui

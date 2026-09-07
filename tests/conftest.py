@@ -535,7 +535,7 @@ ORACLE_GATED_ISOBMFF_REMUX = {
 # HEIC has NO allowlist here, on purpose.
 #
 # MEASURED 2026-09-06 with the current exiftool engine, on a copy of the real
-# HEIC named by MOBILE_HEIC_SOURCES below: MetadataScrubber.sanitize_file()
+# HEIC named by _mobile_heic_source below: MetadataScrubber.sanitize_file()
 # returns status 'error'. The ICC profile survives `exiftool -all=` on HEIC, and
 # verify.py finds two of its strings in the output bytes: 'Adobe RGB (1998)' and
 # 'Copyright 2000 Adobe Systems Incorporated'.
@@ -992,7 +992,7 @@ def make_aiff(tmp_path, ext: str = ".aiff"):
 # the device corpus must never be a precondition for the suite to pass.
 #
 # The .heic kind is the other half of the trade. It uses the real heic/mif1
-# container named by MOBILE_HEIC_SOURCES, which is a real container and NOT
+# container named by _mobile_heic_source, which is a real container and NOT
 # device output (measured; see the note above that constant), and it skips
 # when the file is absent. So on a bare machine the family still has the
 # synthetic AVIF running end to end, and on a machine with the container the
@@ -1113,7 +1113,7 @@ def make_ole2(tmp_path, ext: str):
 # proves: it proves the engine removes the carriers the fixture has, and it
 # proves nothing at all about carriers only a real device writes. Part 3.4 asks
 # for real device output for at least one of each family, and that is still
-# outstanding: see the note above MOBILE_HEIC_SOURCES.
+# outstanding: see the note above _mobile_heic_source.
 #
 # Following make_svg's precedent, a fixture that carries more than one sentinel
 # returns only the one that MUST be gone. The others are recomputable, because
@@ -1160,18 +1160,65 @@ def make_ole2(tmp_path, ext: str):
 #
 # Part 3.4's requirement for real device media is therefore NOT met by this
 # file, for any of the five kinds.
-MOBILE_HEIC_SOURCES = (
-    os.environ.get("METASCRUB_HEIC_SOURCE", ""),
-    r"<volume>/Projects/AI-ML/unstructured/example-docs/img/DA-1p.heic",
-)
+# WHERE THE SOURCE HEIC COMES FROM, and why there is no absolute path here.
+#
+# This list used to carry a second entry: an absolute path to one machine's
+# copy of a HEIC inside an unrelated checkout. Two things were wrong with it.
+# It is machine-specific, so it could only ever work for one person, and it put
+# a developer's directory layout into a public repository.
+#
+# It was removed by the identifier rewrite on 2026-09-07, which turned it into
+# the literal string "<volume>/Projects/...". That string is not a path and can
+# never match, so `_mobile_heic_source` began returning None on every machine
+# and 26 tests started skipping: 17 fixtures here, 7 in test_isobmff_engine and
+# 2 more. Nothing failed. The suite went from 1541 passed / 5 skipped to
+# 1515 / 31 and stayed green, which is precisely the shape of a coverage loss
+# that hides. HEIC is the format this project most needs covered, because
+# exiftool cannot strip a HEIF ICC profile at all and Engine.ISOBMFF exists to.
+#
+# So resolution is now by ENVIRONMENT ONLY, and both variables already exist:
+#
+#   METASCRUB_HEIC_SOURCE   one specific file, wins if set
+#   METASCRUB_DEVICE_CORPUS the local-only device corpus directory, which holds
+#                           real HEIC containers. Never committed, never
+#                           published; see its MANIFEST.
+#
+# There is deliberately no committed binary fallback. tests/fixtures holds
+# BUILDER SCRIPTS, not sample files, and a real heic/mif1 box tree is not
+# something the synthesisers here produce, so a checked-in file would also be
+# someone else's copyrighted sample.
+_HEIC_SUFFIXES = (".heic", ".heif")
 
 
 def _mobile_heic_source():
-    """The first readable candidate HEIC, or None."""
-    for candidate in MOBILE_HEIC_SOURCES:
-        if candidate and os.path.isfile(candidate):
-            return candidate
+    """The first readable candidate HEIC, or None.
+
+    Checked in priority order so an explicit file always beats a directory
+    sweep, and so the reason for a skip is never ambiguous.
+    """
+    explicit = os.environ.get("METASCRUB_HEIC_SOURCE", "")
+    if explicit and os.path.isfile(explicit):
+        return explicit
+
+    corpus = os.environ.get("METASCRUB_DEVICE_CORPUS", "")
+    if corpus and os.path.isdir(corpus):
+        for name in sorted(os.listdir(corpus)):
+            if name.lower().endswith(_HEIC_SUFFIXES):
+                candidate = os.path.join(corpus, name)
+                if os.path.isfile(candidate):
+                    return candidate
     return None
+
+
+def _heic_skip_reason():
+    """Say which variables were consulted, so a skip is diagnosable."""
+    return (
+        "no HEIC source file available. Set METASCRUB_HEIC_SOURCE to a .heic "
+        "file, or METASCRUB_DEVICE_CORPUS to a directory containing one. "
+        "Checked: METASCRUB_HEIC_SOURCE=%r METASCRUB_DEVICE_CORPUS=%r"
+        % (os.environ.get("METASCRUB_HEIC_SOURCE", ""),
+           os.environ.get("METASCRUB_DEVICE_CORPUS", ""))
+    )
 
 
 # THE GUARD
@@ -1453,12 +1500,12 @@ def make_mobile_heic(tmp_path):
     """
     A REAL HEIC CONTAINER with SYNTHETIC device metadata written on top.
 
-    The container is a copy of the file named by MOBILE_HEIC_SOURCES, which is a
+    The container is a copy of the file named by _mobile_heic_source, which is a
     genuine heic/mif1 HEVC still image with a real iloc/iinf/iprp/pitm tree. The
     original is copied and never modified.
 
     The EXIF, GPS and XMP are written here by exiftool and are synthetic. See
-    the measured note above MOBILE_HEIC_SOURCES: the source carries no EXIF at
+    the measured note above _mobile_heic_source: the source carries no EXIF at
     all, so it is a real container and NOT real device output.
 
     HOW IT DIFFERS FROM REAL DEVICE OUTPUT:
@@ -1492,10 +1539,7 @@ def make_mobile_heic(tmp_path):
     """
     source = _mobile_heic_source()
     if source is None:
-        pytest.skip(
-            "no HEIC source file available; set METASCRUB_HEIC_SOURCE to one. "
-            f"Tried: {[c for c in MOBILE_HEIC_SOURCES if c]}"
-        )
+        pytest.skip(_heic_skip_reason())
 
     path = str(tmp_path / "mobile.heic")
     shutil.copyfile(source, path)
@@ -1610,7 +1654,7 @@ def build(kind: str, tmp_path):
         return make_aiff(tmp_path, kind)
     if kind == ".heic":
         # Shared with build_mobile(".heic"). One builder, two entry points; see
-        # the note above MOBILE_HEIC_SOURCES for why forking it would be worse.
+        # the note above _mobile_heic_source for why forking it would be worse.
         return make_mobile_heic(tmp_path)
     if kind == ".avif":
         return make_avif(tmp_path)

@@ -78,7 +78,7 @@ ROUTED_EXTENSIONS = (".heic", ".heif", ".avif")
 
 # --------------------------------------------------------------- device media
 #
-# Same shape as conftest.MOBILE_HEIC_SOURCES: an environment variable first so
+# Same shape as conftest._mobile_heic_source: an environment variable first so
 # another machine can point at its own copy, then the path on this one. A
 # missing corpus SKIPS. It never silently passes, because a test that passes on
 # no input is the quietest possible way to assert nothing.

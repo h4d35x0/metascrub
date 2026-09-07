@@ -706,6 +706,26 @@ ORACLE_ALLOW_ISOBMFF_INPLACE = frozenset({
     "QuickTime:ColorProfiles",
     # HEIF and AVIF item properties: ispe, pixi, pitm.
     "QuickTime:ImageSpatialExtent",
+    # MetaImageSize is exiftool's composite over the SAME ispe boxes that
+    # ImageSpatialExtent above already reports, so allowing it adds no value
+    # that was not already accepted. Measured 2026-09-07 on three real device
+    # HEICs from the local corpus (IMG_1034, Issue 487, exif-at-eof): every one
+    # reports it, `exiftool -v3` attributes it to `ispe`, and the value is the
+    # coded image geometry (4032x3024, 3024x4032) which is a property of the
+    # pixels themselves and is visible to anyone who opens the file.
+    #
+    # ispe is REQUIRED. It is how a decoder learns the image dimensions, so
+    # removing it does not scrub the file, it breaks it. This is the same
+    # reasoning as the VP8 keyframe header entries in ORACLE_ALLOW_WEBP.
+    #
+    # It only surfaced now because the fixture changed. Until 2026-09-07 the
+    # HEIC source was a 596x842 page-shaped image that carried no ispe exiftool
+    # would summarise this way; conftest itself recorded that this file did not
+    # meet the requirement for real device media. Resolving the source from the
+    # device corpus instead put a genuine 4032x3024 camera frame through the
+    # engine, and that immediately found a name this list was missing. A better
+    # fixture finding a gap on its first run is the fixture working.
+    "QuickTime:MetaImageSize",
     "QuickTime:ImagePixelDepth",
     "QuickTime:PrimaryItemReference",
     # mdat, which is the picture itself
