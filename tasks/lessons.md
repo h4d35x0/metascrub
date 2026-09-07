@@ -544,3 +544,42 @@ guarantee than the seven IHDR fields have. The qualification was recorded rather
 than the claim being asserted. `pHYs` sits on the same list while
 `png_engine.py` documents `PixelsPerUnitX 5669` as a producer signature on its
 own; the structural chunk inventory covers that gap, the allowlist does not.
+
+---
+
+## 2026-09-07 - Driving an app headlessly proves the engine, not the product
+
+The Android app was verified by `adb shell am start` plus reading a
+`METASCRUB_RESULT` line out of logcat, on an emulator and then on a real phone.
+Both passed. The scrubbed output was byte-identical to the desktop engine's, so
+the arm64 port was genuinely correct.
+
+The app was still unusable. `targetSdk 35` makes an activity edge-to-edge by
+default, the app applied no window insets anywhere, and the "Send the cleaned
+copy" button was laid out at the bottom of a LinearLayout with no bottom
+padding. On a Pixel 9 Pro XL with THREE-BUTTON navigation the ~126 px bar
+covered essentially the whole button. The file was scrubbed correctly and the
+user could not act on it. The owner found it in thirty seconds by looking at
+his phone.
+
+Two compounding errors, and the second is the one worth remembering:
+
+1. Nothing ever took a screenshot. `lessons.md` already carried
+   "for anything visual, look at it" from the GUI work, and it was not applied.
+2. The emulator would probably not have caught it even WITH a screenshot,
+   because it defaults to GESTURE navigation, whose inset is a few px. The bug
+   only appears at a three-button inset. So "tested on a device" was not the
+   bar; "tested in the user's configuration" was.
+
+**Pattern:** a headless drive answers "did the code run". It cannot answer "can
+a person complete the task". For anything with a UI, the acceptance evidence is
+a screenshot plus the interactive element's measured bounds, checked against the
+system bars, in the navigation mode the user actually has. `uiautomator dump`
+gives the bounds; `settings get secure navigation_mode` gives the mode.
+
+Corollary paid for the same hour: `cmd overlay enable
+com.android.internal.systemui.navbar.threebutton`, used to reproduce the user's
+navigation mode on the emulator, took down system_server. `activity` and
+`package` services disappeared and the AVD needed a reboot. Change a system
+setting with `settings put` where one exists, and do not reconfigure a machine
+that is running someone else's work.

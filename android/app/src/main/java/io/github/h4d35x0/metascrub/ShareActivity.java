@@ -15,6 +15,9 @@ import android.widget.TextView;
 
 import androidx.core.content.FileProvider;
 import androidx.core.content.IntentCompat;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 
 import com.chaquo.python.PyObject;
 import com.chaquo.python.Python;
@@ -113,8 +116,34 @@ public class ShareActivity extends Activity {
     private void buildUi() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        int pad = (int) (16 * getResources().getDisplayMetrics().density);
-        root.setPadding(pad, pad, pad, pad);
+        final int pad = (int) (16 * getResources().getDisplayMetrics().density);
+
+        // WINDOW INSETS ARE NOT OPTIONAL HERE.
+        //
+        // From Android 15 an app targeting SDK 35 is edge-to-edge by default:
+        // the window extends under the status and navigation bars, and anything
+        // laid out at the bottom draws BEHIND the navigation bar unless the app
+        // asks where the bars are and pads itself.
+        //
+        // Measured 2026-09-07 on a Pixel 9 Pro XL running Android 17 with
+        // THREE-BUTTON navigation: "Send the cleaned copy" rendered underneath
+        // the back/home/recents row and could not be tapped. The scrub itself
+        // had worked; the user simply could not act on it. Every emulator run
+        // that "passed" had driven the activity with `am start` and read the
+        // result out of logcat, so nothing ever looked at the screen, and the
+        // emulator used gesture navigation, whose inset is far smaller.
+        //
+        // The listener applies the CURRENT insets rather than a constant,
+        // because the navigation bar height differs between gesture and
+        // three-button mode and changes on rotation and on a foldable unfold.
+        ViewCompat.setOnApplyWindowInsetsListener(root, (v, windowInsets) -> {
+            Insets bars = windowInsets.getInsets(
+                    WindowInsetsCompat.Type.systemBars()
+                            | WindowInsetsCompat.Type.displayCutout());
+            v.setPadding(pad + bars.left, pad + bars.top,
+                         pad + bars.right, pad + bars.bottom);
+            return WindowInsetsCompat.CONSUMED;
+        });
 
         status = new TextView(this);
         status.setTypeface(Typeface.MONOSPACE);
