@@ -626,3 +626,40 @@ Two habits, both cheap: print the method next to the number so the count can be
 re-derived, and characterise the biggest bucket before designing around it. The
 category that dominates a fleet sweep is usually the automated one nobody thinks
 of as a repository.
+
+## A redaction is a code change, and it can disable a test without failing one
+
+Date: 2026-09-07
+
+A history rewrite replaced an absolute developer path with a placeholder. The
+path was correct to remove: it was machine-specific and did not belong in a
+public repository. But it lived inside a tuple of candidate locations that real
+code iterated, not inside a comment, so the placeholder became a string that
+can never match anything.
+
+The resolver started returning None on every machine and 26 tests began
+skipping. Nothing failed. The suite moved from 1541 passed / 5 skipped to
+1515 / 31 and stayed green, and the rewrite script's own gate, which only
+checked pytest's exit status, reported "suite passes".
+
+The format that stopped being covered was the one the whole engine exists for.
+
+Three things generalise:
+
+1. **A text substitution over a whole tree is a code change.** Review it as one.
+   Grep the result for the placeholder and ask, for every hit, whether it sits
+   in prose or in an expression. Here exactly one of four hits was code.
+2. **A gate on "did the suite pass" is not a gate on "did the suite run".**
+   Compare the pass AND skip counts against the previous run; a jump in skips is
+   a regression that exit code zero will never show you.
+3. **Prefer the failure that is loud.** A missing fixture that SKIPS is
+   invisible. Where the source of a fixture is configurable, make the skip
+   message name every variable it consulted and what each contained, so the
+   reason is in the output rather than in someone's memory.
+
+The postscript is the argument for good fixtures. Restoring the coverage meant
+resolving the sample from the real device corpus instead of the old stand-in,
+and the genuine camera frame immediately failed an oracle assertion on a name
+the allowlist was missing. It was structural and correctly allowlisted after
+measuring, but the old fixture had never been able to surface it. A better
+fixture finding a gap on its first run is the fixture working.
