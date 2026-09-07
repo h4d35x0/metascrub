@@ -1,0 +1,139 @@
+plugins {
+    id "com.android.application"
+    id "com.chaquo.python"
+}
+
+// The Python package is not duplicated into this module. It is copied out of the
+// repository root at build time by copyMetascrubPackage below, so there is
+// exactly one copy of metascrub in the tree and no way for an Android-only fork
+// of it to drift. CLAUDE.md: "The GUI is a view over MetadataScrubber, never a
+// second implementation." The same rule applies to the app.
+def repoRoot = rootDir.parentFile
+def metascrubSource = new File(repoRoot, "metascrub")
+def generatedPythonDir = layout.buildDirectory.dir("generated/python")
+
+tasks.register("copyMetascrubPackage", Sync) {
+    description = "Copy the repository's metascrub package into the Python source set."
+    group = "build"
+
+    // Sync deletes the destination contents it did not write, so a file removed
+    // from the repository is removed from the APK on the next build too.
+    from(metascrubSource) {
+        exclude "**/__pycache__/**"
+        exclude "**/*.pyc"
+    }
+    into generatedPythonDir.map { it.dir("metascrub") }
+
+    doFirst {
+        if (!metascrubSource.isDirectory()) {
+            throw new GradleException(
+                "metascrub package not found at ${metascrubSource}. This module " +
+                "must sit at <repo>/android/app; nothing here can be built " +
+                "standalone.")
+        }
+    }
+
+    // A Sync from an empty or wrong directory produces an empty package and a
+    // build that succeeds while shipping nothing. Assert the four engines the
+    // app actually calls landed, so that failure is loud instead of silent.
+    doLast {
+        def destination = generatedPythonDir.get().dir("metascrub").asFile
+        def required = [
+            "__init__.py",
+            "structure.py",
+            "isobmff.py",
+            "engines/jpeg_engine.py",
+            "engines/png_engine.py",
+            "engines/webp_engine.py",
+            "engines/isobmff_engine.py",
+        ]
+        def missing = required.findAll { !new File(destination, it).isFile() }
+        if (!missing.isEmpty()) {
+            throw new GradleException(
+                "copyMetascrubPackage produced an incomplete package. Missing: " +
+                missing.join(", "))
+        }
+    }
+}
+
+android {
+    namespace "io.github.h4d35x0.metascrub"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "io.github.h4d35x0.metascrub"
+
+        // Chaquopy 17 requires API 24 or newer. 26 is chosen instead because
+        // scoped storage behaviour and the java.time/NIO surface below 26 would
+        // both need separate handling for no benefit to this build.
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName "0.1.0-phase4"
+
+        ndk {
+            // x86_64 is the emulator this was verified on; arm64-v8a is every
+            // phone shipped in the last decade. Both are listed rather than
+            // "all" so the APK does not carry two Python runtimes nobody runs.
+            abiFilters "arm64-v8a", "x86_64"
+        }
+
+        python {
+            // Pinned rather than defaulted. Chaquopy needs a local interpreter
+            // of the same major.minor to compile the source set, and 3.11 is
+            // what is installed on this build machine.
+            version "3.11"
+
+            // Deliberately empty. The whole point of the Phase 1 and 2 engines
+            // is that they need nothing that is not in the standard library:
+            // pikepdf, Pillow and pyexiftool cannot be installed here and are
+            // not asked for.
+            pip {
+            }
+        }
+    }
+
+    sourceSets {
+        main {
+            python {
+                srcDirs = [
+                    "src/main/python",
+                    generatedPythonDir.get().asFile.path,
+                ]
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            minifyEnabled false
+        }
+        release {
+            // No signing config here on purpose. Nothing in this tree may carry
+            // a key, so `assembleRelease` produces an unsigned APK and the
+            // verified artifact is the debug one.
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"),
+                          "proguard-rules.pro"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation "androidx.core:core:1.13.1"
+}
+
+// preBuild is the first task of every variant, so this covers debug and release
+// without naming either. The name matcher is a belt: it catches Chaquopy's own
+// source-set tasks directly, in case a future AGP reorders the graph.
+tasks.named("preBuild").configure {
+    dependsOn("copyMetascrubPackage")
+}
+tasks.matching { it.name.contains("Python") }.configureEach {
+    dependsOn("copyMetascrubPackage")
+}

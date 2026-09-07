@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!--
+        Only the scrubbed output is shareable. The staged copy of the input
+        lives in the cache directory and is deliberately NOT exported here, so
+        a bug in the share step cannot hand the untouched original to anyone.
+    -->
+    <external-files-path
+        name="scrubbed"
+        path="scrubbed/" />
+</paths>

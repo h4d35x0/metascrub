@@ -1,0 +1,11 @@
+// Root build file. Plugin versions are declared here and applied in :app.
+//
+// Version choices, all measured on this machine 2026-09-07:
+//   Chaquopy 17.0.0 declares support for AGP 7.3 - 9.2 and Python 3.10 - 3.14.
+//   AGP 8.10.1 sits inside that range and requires Gradle 8.11.1 or newer.
+//   Gradle 8.14 is used because it was already present in the Gradle user home,
+//   which removes a distribution download from the build.
+plugins {
+    id "com.android.application" version "8.10.1" apply false
+    id "com.chaquo.python" version "17.0.0" apply false
+}

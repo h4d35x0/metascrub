@@ -1,0 +1,28 @@
+# Gradle
+.gradle/
+build/
+*/build/
+
+# Local machine configuration. Contains sdk.dir, which is a machine path and
+# must never be committed.
+local.properties
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+captures/
+
+# Keys and signing material. Nothing signed with a real key belongs here.
+*.jks
+*.keystore
+keystore.properties
+
+# Build outputs
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Python bytecode that may leak into the packaged source set
+__pycache__/
+*.pyc

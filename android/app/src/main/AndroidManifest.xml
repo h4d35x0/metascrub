@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+        No permissions are declared, and that is a design statement rather than
+        an omission. The app reads exactly one file, through the URI grant that
+        arrives with the share intent, and writes only inside its own storage.
+        It has no INTERNET permission, so nothing it reads can leave the device.
+    -->
+
+    <application
+        android:allowBackup="false"
+        android:icon="@android:drawable/ic_menu_delete"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.Material.Light">
+
+        <activity
+            android:name=".ShareActivity"
+            android:exported="true"
+            android:label="@string/share_label">
+
+            <!--
+                The flow that matters: gallery, Share, metascrub, on to the
+                destination app. An app you have to open and navigate to find a
+                file does not get used at the moment it matters.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="video/*" />
+            </intent-filter>
+
+            <!--
+                A launcher entry as well, showing what actually loaded on this
+                device rather than a file picker. It is the on-device answer to
+                "which engines are really running", which is otherwise a claim
+                nobody can check from the phone.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+            The cleaned file is handed on as a content:// URI with a read grant
+            scoped to the receiving app, never as a file:// path. The receiving
+            app therefore gets the scrubbed copy and no access to anything else.
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+    </application>
+</manifest>
