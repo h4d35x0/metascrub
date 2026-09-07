@@ -97,6 +97,29 @@ def _print_result(result: Dict) -> None:
         for region in regions[:5]:
             print(_c(f"        {region[:70]}", RED))
 
+    # Identifiers that are not in the file. Printed for every status, and
+    # printed whether or not --neutral-names was passed, because a user who
+    # does not know the filename leaks cannot choose to fix it. Yellow, not
+    # red: this is advisory and never changes the exit code, so a heuristic
+    # false positive can never fail somebody's pipeline.
+    for leak in result.get("name_leaks", []):
+        print(_c(f"      FILENAME LEAK ({leak['kind']}): {leak['detail']}", YELLOW))
+    if not result.get("renamed_to") and result.get("name_leaks") \
+            and not result.get("rename_error"):
+        print(_c("      fix it with --neutral-names, or rename the file yourself",
+                 GREY))
+    if result.get("renamed_to"):
+        print(_c(f"      renamed to {os.path.basename(result['renamed_to'])}", GREEN))
+        if result.get("backup"):
+            # The backup is the original, and the original's NAME is part of
+            # the original. Saying so once is the difference between a user
+            # who knows the leaky name still sits in the directory and one who
+            # believes the rename removed it.
+            print(_c(f"      the backup keeps the original name: "
+                     f"{os.path.basename(result['backup'])}", GREY))
+    if result.get("rename_error"):
+        print(_c(f"      {result['rename_error']}", RED))
+
     if result.get("error"):
         print(_c(f"      {result['error']}", RED))
     if result.get("detail") and status in (STATUS_DEFERRED, STATUS_UNSUPPORTED):
@@ -128,7 +151,11 @@ def cmd_scrub(args: argparse.Namespace) -> int:
         exif_io.close_session()
         return 1
 
-    scrubber = MetadataScrubber(backup=not args.no_backup, reset_times=args.reset_times)
+    scrubber = MetadataScrubber(
+        backup=not args.no_backup,
+        reset_times=args.reset_times,
+        neutral_names=args.neutral_names,
+    )
     results: List[Dict] = []
 
     with scrubber:
@@ -179,12 +206,40 @@ def cmd_scrub(args: argparse.Namespace) -> int:
         print(_c(
             f"  STILL LEAKING     {len(report['files_with_residual_metadata'])}", RED
         ))
+    if report["renamed_files"]:
+        fixed = (len(report["filenames_with_leaks"])
+                 - len(report["filenames_still_leaking"]))
+        print(f"  renamed           {report['renamed_files']}"
+              + (f"  ({fixed} of them were leaking)" if fixed else ""))
+    if report["filenames_still_leaking"]:
+        # Counted and named separately from the byte verdicts above. Nothing
+        # here was measured by scanning the output; it was read off a name.
+        # And this counts what is STILL on disk under a leaking name, not what
+        # was found: reporting the found count after renaming them all would
+        # tell the user the problem persists when it does not.
+        print(_c(
+            f"  LEAKING FILENAMES {len(report['filenames_still_leaking'])}"
+            + ("" if args.neutral_names else "  (--neutral-names fixes these)"),
+            YELLOW,
+        ))
+    if report["rename_failures"]:
+        print(_c(f"  RENAME FAILED     {len(report['rename_failures'])}", RED))
     if args.report:
         print(f"  report written to {args.report}")
 
     # Non-zero exit when anything failed or anything still leaks, so this can be
     # used in a pipeline without the caller having to parse the report.
-    return 1 if (report["error_files"] or report["files_with_residual_metadata"]) else 0
+    #
+    # A rename failure counts. The file is clean, so the byte-level verdicts
+    # are all green, and a caller who asked for --neutral-names and did not get
+    # one would otherwise see exit 0 over a file still named after the minute
+    # it was taken. A DETECTED filename leak deliberately does NOT count: the
+    # detector is a heuristic and a heuristic must not be able to fail a build.
+    return 1 if (
+        report["error_files"]
+        or report["files_with_residual_metadata"]
+        or report["rename_failures"]
+    ) else 0
 
 
 def cmd_inspect(args: argparse.Namespace) -> int:
@@ -341,7 +396,12 @@ def build_parser() -> argparse.ArgumentParser:
     scrub.add_argument("--no-backup", action="store_true",
                        help="do not write <file>.backup before modifying")
     scrub.add_argument("--reset-times", action="store_true",
-                       help="also normalise filesystem timestamps")
+                       help="also normalise filesystem timestamps (mtime, atime, "
+                            "and creation time on Windows)")
+    scrub.add_argument("--neutral-names", action="store_true",
+                       help="rename each scrubbed file to fileNNNN.ext, because "
+                            "a name like PXL_20260906_143022891.jpg carries the "
+                            "capture time and no byte scan can catch it")
     scrub.add_argument("--remove-field", action="append", metavar="TAG",
                        help="remove one tag instead of everything (exiftool formats only)")
     scrub.add_argument("--sanitize-field", action="append", metavar="TAG",
