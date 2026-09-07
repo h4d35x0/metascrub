@@ -12,6 +12,50 @@ Versions follow [semantic versioning](https://semver.org/). The PyPI package is
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **The report now states what it did NOT check.** A `.pdf` used to print
+  `SANITIZED` and nothing else, and a reader could reasonably take silence for
+  completeness. It now prints `NOT FULLY CHECKED: ... GPS carriers: NOT CHECKED
+  (no GPS walker for .pdf); structure: NOT CHECKED (no structural walker for
+  .pdf)`.
+
+  In the JSON report this is a new `coverage` key on each result. **The change
+  is purely additive**: every pre-existing key keeps its name, type and meaning,
+  proven by a test that loads the previous `Verification.as_dict()` out of git
+  and asserts the key sets differ by exactly `{"coverage"}`. `--report FILE` is
+  an interface and this does not break it.
+
+  `coverage.structure_applicable` closes a real ambiguity that shipped in 1.0.2:
+  `unaccounted_regions: []` was emitted identically whether the structural walk
+  ran and found nothing or never happened at all. A scrubbed `.gif` and a
+  scrubbed `.pdf` were byte-identical on `verdict`, `clean` and
+  `unaccounted_regions`, and are now told apart.
+
+- **HEIC, HEIF and AVIF are scrubbed by a new pure-Python ISO base media
+  engine** instead of exiftool, which cannot remove a HEIF ICC profile at all:
+  asked directly, `exiftool -icc_profile:all=` reports "1 image files
+  unchanged". Every real Apple HEIC previously FAILED verification on two
+  strings inside its Display P3 profile. They now scrub clean at unchanged file
+  length with the decoded picture bit-identical.
+
+- **A structural GPS check.** The residual byte scan can never see a
+  coordinate, because EXIF stores rationals and the decimal string exiftool
+  prints is not in the file. 20 of 71 extensions are covered; the rest report
+  NOT_CHECKED and can never read as clean.
+
+### Known limits
+
+- A file whose baseline read yields no searchable values still reports
+  `verified_clean` after searching zero strings. The decision on how to grade
+  that case is open and is breaking either way; see
+  `verify.ZERO_NEEDLE_DECISION_IS_OPEN`.
+- A GPS carrier found in an output is reported but does not change the verdict.
+
+---
+
 ## [1.0.2] - 2026-09-06
 
 **If you scrubbed a `.png`, `.webp` or `.gif` with any earlier version and you

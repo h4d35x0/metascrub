@@ -147,7 +147,7 @@ embeds a unique sentinel and the assertion searches the bytes for it.
 ## Commands
 
 ```bash
-python -m pytest tests/ -q          # 1472 passed, 5 skipped, dev machine, 2026-09-07
+python -m pytest tests/ -q          # 1521 passed, 5 skipped, dev machine, 2026-09-07
 python -m metascrub selftest        # end-to-end, including a real round trip
 python -m metascrub doctor          # can the engines start
 python -m metascrub gui
@@ -156,7 +156,7 @@ python -m metascrub gui
 The 5 skips are intentional: .doc, .xls, .ppt and .svg are PARTIAL so they skip
 the COMPLETE-formats check, and one test of the missing-LibreOffice path skips
 where LibreOffice is present. Measured on the dev machine 2026-09-07 after the
-HEIC routing fix: 1472 passed, 5 skipped, 8m47s. This number moves fast right
+coverage wiring: 1521 passed, 5 skipped, 7m36s. This number moves fast right
 now; it was 899, then 986, then 1345. It is an environment fact rather than a
 gate. Compare TOTALS and FAILURES, then read every skip reason with `-rs`.
 
