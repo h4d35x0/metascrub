@@ -88,14 +88,45 @@ def _check_tkinter() -> Result:
 
 
 def _check_engines() -> Result:
+    """
+    Every engine a user can actually reach must be ready.
+
+    Reachable means "some extension in CAPABILITIES routes to it". An engine
+    registered but with no CAPABILITIES row cannot be invoked by any code path,
+    so its readiness says nothing about whether this installation works, and
+    failing on it reports a broken tool to someone whose tool is fine.
+
+    Measured 2026-09-06: adding three unimplemented Phase 1 engine stubs, which
+    no CAPABILITIES row referenced, turned `metascrub selftest` red with
+    "3 of 10 unavailable". Nothing a user could do was broken. Phase 2 will add
+    another such stub, so this is fixed at the check rather than by remembering
+    to implement things quickly enough.
+
+    This NARROWS a check, which is the dangerous direction, so note what still
+    fails: any engine with a CAPABILITIES row is gated exactly as before, and
+    test_broken_tool_makes_the_whole_selftest_fail proves it by breaking
+    exiftool, which is reachable. An unreachable engine that is not ready is
+    reported in the detail line rather than hidden, so it cannot rot unnoticed.
+    """
+    from .capabilities import CAPABILITIES
     from .engines import engine_status
 
     statuses = engine_status()
-    broken = {name: why for name, why in statuses.items() if why != "ready"}
+    reachable = {spec.engine.value for spec in CAPABILITIES.values()}
+
+    broken = {
+        name: why for name, why in statuses.items()
+        if why != "ready" and name in reachable
+    }
     if broken:
         detail = "; ".join(f"{n}: {w}" for n, w in sorted(broken.items()))
-        return FAIL, "engines", f"{len(broken)} of {len(statuses)} unavailable - {detail}"
-    return PASS, "engines", f"all {len(statuses)} ready"
+        return FAIL, "engines", (
+            f"{len(broken)} of {len(reachable)} reachable engines unavailable - {detail}"
+        )
+
+    pending = sorted(n for n, w in statuses.items() if w != "ready")
+    note = f"; not wired up yet: {', '.join(pending)}" if pending else ""
+    return PASS, "engines", f"all {len(reachable)} reachable engines ready{note}"
 
 
 def _check_round_trip() -> Result:

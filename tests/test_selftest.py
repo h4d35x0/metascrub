@@ -129,3 +129,39 @@ def test_cli_selftest_exits_non_zero_when_broken(monkeypatch, capsys):
     assert code == 1
     assert "FAIL" in out and "forced" in out
     assert "1 check(s) FAILED" in out
+
+
+def test_an_unreachable_engine_does_not_fail_the_selftest(monkeypatch):
+    """
+    An engine with no CAPABILITIES row cannot be invoked, so its readiness must
+    not gate the tool. Three unimplemented Phase 1 stubs turned selftest red on
+    2026-09-06 while nothing a user could do was broken.
+    """
+    from metascrub import engines as engines_mod
+
+    real = engines_mod.engine_status
+    monkeypatch.setattr(
+        engines_mod, "engine_status",
+        lambda: dict(real(), **{"jpeg": "not implemented yet"}),
+    )
+    outcome, name, detail = selftest._check_engines()
+    assert name == "engines"
+    assert outcome == selftest.PASS
+    assert "not wired up yet" in detail and "jpeg" in detail
+
+
+def test_a_reachable_engine_that_is_broken_still_fails(monkeypatch):
+    """
+    The overcorrection guard for the test above. Narrowing the check must not
+    let a REACHABLE engine rot: exiftool has CAPABILITIES rows, so it gates.
+    """
+    from metascrub import engines as engines_mod
+
+    real = engines_mod.engine_status
+    monkeypatch.setattr(
+        engines_mod, "engine_status",
+        lambda: dict(real(), **{"exiftool": "binary not found"}),
+    )
+    outcome, name, detail = selftest._check_engines()
+    assert outcome == selftest.FAIL
+    assert "exiftool" in detail
