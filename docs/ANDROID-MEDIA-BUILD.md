@@ -308,7 +308,17 @@ Remove, wherever they appear in the box tree:
 | `udta` | the GPS location atom (`0xA9` followed by `xyz`, confirmed byte-for-byte as `a9 78 79 7a`, payload ISO 6709 e.g. `+44.5588-072.5778+315.000/`), `0xA9 mak`, `0xA9 mod`, Apple and Samsung proprietary boxes, **and `moov/udta/XMP_`** |
 | `meta` and `ilst` **in MP4/MOV only** | iTunes-style tag dictionaries |
 | `uuid` | XMP, under the UUID `be7acfcb-97a9-42e8-9c71-999491e3afac` (confirmed); also vendor blocks |
-| `iprp/ipco/colr` **in HEIF/AVIF** | the ICC profile. 552 bytes of Apple Display P3 measured on a real iPhone HEIC, carrying `DeviceManufacturer: Apple Computer Inc.` and a profile ID |
+| `iprp/ipco/colr` **only when its colour_type is `prof` or `rICC`** | an embedded ICC profile, which carries `DeviceManufacturer` and a profile id |
+| `hdlr` name field | a device writes its product name here; ffmpeg writes `VideoHandler`/`SoundHandler` |
+| `CompressorName` and `VendorID` | fixed-offset fields inside the VisualSampleEntry (`avc1`/`hvc1`). Measured surviving in-place surgery: `Lavc61.26.100 libx264` and `FFMP`. The ffmpeg remux engine hid these by rewriting the container; surgery does not, so they must be handled explicitly |
+
+**`colr` correction, measured 2026-09-06.** An earlier version of this table said
+to remove `iprp/ipco/colr` unconditionally. That is wrong. A `colr` box whose
+colour_type is `nclx` holds colour primaries, transfer characteristics, matrix
+coefficients and a range flag: enumerations that cannot hold a string, carry no
+identity, and are needed to render the image correctly. Removing it changes the
+picture for no privacy gain. Key the decision on the colour_type: `prof` and
+`rICC` are embedded ICC profiles and go; `nclx` stays.
 
 **Corrected 2026-09-06. The original two-row table leaks, three ways.**
 
@@ -348,15 +358,33 @@ metadata dictionary and is safe to remove.
 
 **But the conclusion drawn from it was wrong, and HEIC is not the hard part.**
 The original text said item removal means editing `iinf`, `iloc` and `iref`
-consistently, and sequenced HEIC last for that reason. Measured 2026-09-06 on
-a real iPhone 11 HEIC: you edit none of the three. You zero the bytes that
-`iloc` already points at. The item tables stay exactly as they are, pointing
-at zeroed payloads, which is the same in-place principle as 2.5 one level
-down. Result: 150 exiftool tags reduced to 68, Make, Model, timestamps and
-XMP all gone, pixels bit-identical, file length unchanged.
+consistently, and sequenced HEIC last for that reason. You edit none of the
+three, and **HEIC can be sequenced alongside MP4 rather than last.**
 
-So **HEIC can be sequenced alongside MP4 rather than last.** The genuinely
-hard part of HEIF is `colr`, which the original table did not mention at all.
+**Corrected twice, and the second correction matters.** An intermediate version
+of this section said to zero the item payload BYTES that `iloc` points at, and
+cited "150 exiftool tags reduced to 68" on "a real iPhone 11 HEIC". Both were
+wrong. That file (`DA-1p.heic`) is a genuine HEIC container but NOT device
+output: measured, it is 596x842 and carries ZERO EXIF and ZERO XMP tags, where
+an iPhone 11 shoots 4032x3024. The figure belonged to someone else's file.
+
+More importantly, **zeroing the payload bytes produces a file this project's own
+oracle refuses to certify.** Measured 2026-09-06: exiftool then warns
+`Invalid XMP`, which `exif_io` classes as `UNPARSED`, and trap 12 is explicit
+that an unparseable read is not evidence of cleanliness. Allowlisting that
+warning was proposed and is the wrong fix: it would silence the one signal that
+distinguishes a cleaned file from an unreadable one.
+
+**Zero the `iloc` extent LENGTH field instead.** It is length-preserving, it
+matches the shape of exiftool's own `-all=` output, and the warning does not
+occur. Measured: all eleven Phase 2 outputs read `PARSED` with an empty error,
+and nothing was added to any allowlist. Note the consequence for a verifier: a
+surviving `Exif` item in `iinf` is therefore NOT evidence of a leak, because a
+correctly scrubbed HEIC still has the item with a zero-length extent.
+
+Honour `construction_method`. Method 0 is file-offset and method 1 is
+`idat`-relative; a walker that reads the field and discards it will zero the
+wrong bytes for method 1. Method 2 (item-relative) is refused.
 
 ### 2.5 The offset strategy, which is the difference between working and corrupting
 
@@ -378,8 +406,10 @@ decode was clean, the decoded video `framemd5` was **bit identical** to the
 original, exiftool reported zero metadata groups, and zero sentinel bytes
 survived.
 
-Two conditions attach. `udta`, `uuid` and `XMP_` must be zeroed in one
-operation rather than separately. And every one of these results comes from
+Two conditions attach. `udta` and `uuid` must be zeroed in one operation rather
+than separately; an earlier version of this sentence listed `XMP_` as a third,
+which reads as a separate top-level carrier and is not: `XMP_` is always a child
+of `udta` and goes with it. And every one of these results comes from
 ffmpeg, exiftool and libheif on a single desktop machine: a `free` box placed
 inside `moov` needs one confirmation on the actual Android decoder before
 shipping, which belongs in Phase 4.
@@ -430,9 +460,16 @@ alone. It can assert over the output **structure**:
   are zero bytes past the declared RIFF size, and **no unknown chunk is
   present inside it**. Assert over the actual chunk inventory, never over
   the `VP8X` flag bits, which are an attacker-controlled field (see 2.3).
-- ISO base media: no `udta`, no `uuid`, no `ilst` anywhere in the tree; no
-  `meta` outside HEIF/AVIF; every `free` and `skip` payload is all zero;
-  `mvhd`/`tkhd`/`mdhd` times are zero; output length equals input length.
+- ISO base media: no `udta`, no `uuid`, no `ilst` anywhere in the tree; every
+  `free` and `skip` payload is all zero; `mvhd`/`tkhd`/`mdhd` times are zero;
+  output length equals input length.
+
+  **Corrected 2026-09-06.** This bullet used to say "no `meta` outside
+  HEIF/AVIF". That is a routing rule keyed on FILE TYPE, which is precisely
+  what trap 8 forbids: the extension does not determine the layout. State it as
+  a CONTENT rule instead. A `meta` box that holds both `iinf` and `iloc` is
+  structural and must survive, at any depth, in any file; a `meta` box that does
+  not is a metadata dictionary and goes.
 
 This does not depend on having read the value first. It is a proof about
 what the file can no longer contain, rather than a search for one thing it
