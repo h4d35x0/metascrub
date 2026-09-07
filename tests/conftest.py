@@ -340,18 +340,62 @@ ORACLE_ALLOW_PNG = frozenset({
 #   MEASURED 2026-09-06: exiftool reports PNG:Gamma (gAMA), PNG:PixelsPerUnitX,
 #   PNG:PixelsPerUnitY and PNG:PixelUnits (pHYs), and PNG:SRGBRendering (sRGB)
 #   when those chunks are present.
-#   NOT MEASURED: PNG:WhitePointX / PNG:WhitePointY (cHRM) and
-#   PNG:SignificantBits (sBIT). exiftool 13.29 would not write those two chunks
-#   on request here, so no fixture in this file has ever carried them. Part 3.3
-#   names them; this file has not seen them. Phase 1 measures them or does not
-#   add them. A name allowlisted on someone else's measurement is a name nobody
-#   ever checked.
+#   MEASURED 2026-09-06 by the PNG team, and RE-MEASURED INDEPENDENTLY
+#   2026-09-06 before the nine names below were added: cHRM and sBIT. Not
+#   inherited. exiftool 13.29 will not WRITE those two chunks on request, which
+#   is what stopped the earlier measurement; building the chunks by hand and
+#   handing exiftool the result works, and that is what was done. A PNG
+#   carrying cHRM 31270/32900/64000/33000/30000/60000/15000/6000 and sBIT
+#   08 08 08 reported, through scrubber._real_tags:
+#     PNG:WhitePointX 0.3127   PNG:WhitePointY 0.329
+#     PNG:RedX 0.64            PNG:RedY 0.33
+#     PNG:GreenX 0.3           PNG:GreenY 0.6
+#     PNG:BlueX 0.15           PNG:BlueY 0.06
+#     PNG:SignificantBits '8 8 8'
+#   EIGHT tags out of cHRM, not the two Part 3.3 names. Part 3.3 is wrong about
+#   that and the measurement is what is encoded here.
+#
+# tests/test_oracle_allowlist.py is the trap 11 overcorrection test that landed
+# with these nine, and it is where the widening is proven not to have blinded
+# the oracle: it re-injects real identity tags into a fixture carrying every one
+# of the nine and requires assert_oracle_sees_nothing to still FAIL.
+#
+# ONE HONEST QUALIFICATION, because this list claims its members "cannot carry
+# identity at all" and cHRM's eight can carry arbitrary bits: a chromaticity is
+# a 4-byte fixed-point number, so eight of them are 32 bytes an attacker could
+# in principle write anything into. What they cannot hold is a STRING or a
+# WALL-CLOCK TIME, which is what the oracle exists to catch, and any value that
+# is not the true chromaticity changes how the image renders. That is the same
+# bar the seven IHDR fields clear and a weaker one than it sounds: pHYs is
+# already on this list and PixelsPerUnitX 5669 is a producer signature in its
+# own right (png_engine.py says so). Structural assertion over the chunk
+# inventory is what covers that gap, not this list, and it always was.
 ORACLE_ALLOW_PNG_KEEPLIST = ORACLE_ALLOW_PNG | frozenset({
     "PNG:Gamma",           # gAMA, one 4-byte fixed-point number
     "PNG:PixelsPerUnitX",  # pHYs, physical pixel dimensions
     "PNG:PixelsPerUnitY",  # pHYs
     "PNG:PixelUnits",      # pHYs unit specifier, 0 or 1
     "PNG:SRGBRendering",   # sRGB, one rendering-intent byte
+    # cHRM, eight 4-byte fixed-point chromaticity coordinates. Each one names a
+    # point in the CIE xy plane: where the display's white, red, green and blue
+    # primaries sit. There is no string field and no time field in the chunk,
+    # its length is fixed at 32 bytes so nothing can be appended to it, and a
+    # value that is not the real primary makes the picture render in the wrong
+    # colours. It describes the pixels; it cannot name the person.
+    "PNG:WhitePointX",     # cHRM, white point x
+    "PNG:WhitePointY",     # cHRM, white point y
+    "PNG:RedX",            # cHRM, red primary x
+    "PNG:RedY",            # cHRM, red primary y
+    "PNG:GreenX",          # cHRM, green primary x
+    "PNG:GreenY",          # cHRM, green primary y
+    "PNG:BlueX",           # cHRM, blue primary x
+    "PNG:BlueY",           # cHRM, blue primary y
+    # sBIT, one byte per channel saying how many bits of each sample were
+    # significant in the original. Between one and four bytes, fixed by the
+    # colour type, and every byte is bounded to 1..bit depth, so the whole
+    # chunk holds at most four numbers in the range 1..16. Not a string, not a
+    # time, and too small to hold a name even if it were free.
+    "PNG:SignificantBits",
 })
 
 # WebP. Measured on the exiftool engine's output. All five come out of the VP8

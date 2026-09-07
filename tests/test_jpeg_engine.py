@@ -62,7 +62,14 @@ from conftest import (
 from metascrub.capabilities import CAPABILITIES, Engine
 from metascrub.engines import get_engine
 from metascrub.engines.base import EngineError
-from metascrub.engines.jpeg_engine import JpegEngine
+from metascrub.engines.jpeg_engine import (
+    KEEP,
+    REMOVE,
+    UNKNOWN,
+    JpegEngine,
+    Segment,
+    classify,
+)
 
 HAVE_FFMPEG = shutil.which("ffmpeg") is not None
 
@@ -78,14 +85,47 @@ HAVE_FFMPEG = shutil.which("ffmpeg") is not None
 # Markers with no length field: TEM, SOI, EOI and RST0..RST7.
 STANDALONE = {0x01, 0xD8, 0xD9} | set(range(0xD0, 0xD8))
 
-# Section 2.1's keep-list expressed as marker numbers. APP0 and APP14 are NOT
-# in here: they are conditional on the identifier and are checked separately,
-# which is the whole point of the 2026-09-06 correction.
-KEEP_BY_NUMBER = (
-    {0xD8, 0xD9, 0xDA, 0xDB, 0xC4, 0xDD}           # SOI EOI SOS DQT DHT DRI
-    | set(range(0xD0, 0xD8))                        # RST0..RST7
-    | {code for code in range(0xC0, 0xD0) if code not in (0xC4, 0xC8, 0xCC)}
+# ISO/IEC 10918-1 (T.81) TABLE B.1, TRANSCRIBED FROM THE MARKER ASSIGNMENTS.
+#
+# Written out one range at a time, from the specification and not from
+# jpeg_engine.py, for the reason the module docstring gives: a gate that shares
+# its table with the thing it gates cannot catch a wrong table. The engine
+# builds its buckets from ranges and set arithmetic; this builds them from the
+# names. test_the_three_buckets_partition_every_marker_number asserts the two
+# agree, and that between them they account for every marker number that can
+# legally follow an 0xFF.
+#
+# The correction this encodes, 2026-09-06: TEM, DAC, DNL, DHP and EXP are
+# STRUCTURAL. Phase 1 removed all five, because section 2.1 says "keep only
+# these markers" and enumerates none of them. Every one is decode-necessary and
+# none has a field that could hold a name, a place or a time.
+SPEC_METADATA = set(range(0xE0, 0xF0)) | {0xFE}        # APP0..APP15, COM
+
+SPEC_STRUCTURAL = (
+    {0x01}                                    # TEM
+    | {0xC0, 0xC1, 0xC2, 0xC3}                # SOF0..SOF3
+    | {0xC4}                                  # DHT
+    | {0xC5, 0xC6, 0xC7}                      # SOF5..SOF7
+    | {0xC9, 0xCA, 0xCB}                      # SOF9..SOF11
+    | {0xCC}                                  # DAC
+    | {0xCD, 0xCE, 0xCF}                      # SOF13..SOF15
+    | set(range(0xD0, 0xD8))                  # RST0..RST7
+    | {0xD8, 0xD9, 0xDA, 0xDB}                # SOI, EOI, SOS, DQT
+    | {0xDC, 0xDD, 0xDE, 0xDF}                # DNL, DRI, DHP, EXP
 )
+
+# Reserved or undefined: neither a carrier nor a marker the standard defines.
+# The engine REFUSES these, so none of them can appear in an output at all.
+SPEC_UNDEFINED = (
+    set(range(0x02, 0xC0))       # RES, reserved
+    | {0xC8}                     # JPG, reserved for JPEG extensions
+    | set(range(0xF0, 0xFE))     # JPG0..JPG13, reserved for JPEG extensions
+)
+
+# The keep-list expressed as marker numbers. APP0 and APP14 are NOT in here:
+# they are conditional on the identifier and are checked separately, which is
+# the whole point of the 2026-09-06 identifier correction.
+KEEP_BY_NUMBER = frozenset(SPEC_STRUCTURAL)
 
 # The two conditional rows. APP0's identifier is NUL terminated; APP14's is
 # not, because the Adobe segment is the literal "Adobe" followed immediately by
@@ -222,6 +262,13 @@ def structural_violations(data: bytes):
                     "marker 0x%02X at %d survives with identifier %r, not %r; "
                     "the keep-list is keyed on the identifier, not the number"
                     % (code, start, identifier(payload), expected))
+            continue
+        if code in SPEC_UNDEFINED:
+            violations.append(
+                "marker 0x%02X at %d (%d bytes) is reserved or undefined in "
+                "T.81 Table B.1; the engine must refuse a file carrying one, "
+                "never ship it in an output"
+                % (code, start, end - start))
             continue
         if code not in KEEP_BY_NUMBER:
             violations.append(
@@ -1293,3 +1340,409 @@ def test_a_file_with_nothing_to_remove_is_left_alone(tmp_path):
     assert os.stat(path).st_mtime == before.st_mtime
     assert removed == ["jpeg marker stream walked; nothing outside the "
                        "keep-list was present"], removed
+
+
+# ---------------------------------------------------------------------------
+# 11. The three-way classification, the five decode-necessary markers, and the
+#     third answer: refuse.
+#
+# WHAT PHASE 1 GOT WRONG AND WHAT WAS ACTUALLY MEASURED HERE
+#
+# Phase 1 removed DNL, DHP, EXP, DAC and TEM, and said so in a comment that
+# also said the choice was NOT MEASURED because no encoder available here emits
+# any of them. That last part was true of encoders and not true of the file
+# format: a DNL-bearing JPEG can be BUILT, and one was.
+#
+# MEASURED 2026-09-06, Pillow 12.1.1 / libjpeg, exiftool 13.29:
+#
+#   CONSTRUCTED AND DECODABLE. A baseline JPEG with `FF DC 00 04 <NL>` spliced
+#   in between the end of the entropy-coded scan and EOI, which is where B.2.5
+#   puts DNL, decodes under Pillow with pixels BYTE-IDENTICAL to the same file
+#   without the marker, and exiftool reads it as an ordinary 96x72 JPEG. That
+#   is the fixture dnl_bytes below, and it is a real measurement of the keep
+#   path: the marker survives the scrub, the file still decodes, and the
+#   picture is unchanged.
+#
+#   NOT DECODABLE HERE, and named rather than hidden:
+#     - the SPEC-STRICT DNL form, where SOF declares a height of zero and DNL
+#       supplies the real one. libjpeg does not implement it ("Empty JPEG
+#       image (DNL not supported)"); Pillow raises UnidentifiedImageError and
+#       exiftool reports ImageHeight 0. So this form is asserted STRUCTURALLY
+#       only, in test_the_spec_strict_zero_height_dnl_form_is_still_kept: the
+#       marker is preserved in a hand-built stream even though no decoder here
+#       will consume it.
+#     - TEM, DAC, DHP and EXP spliced into a baseline stream. Pillow fails to
+#       identify a stream containing TEM at all, and libjpeg treats DAC, DHP
+#       and EXP in a baseline Huffman file as a broken data stream. Building a
+#       genuine hierarchical or arithmetic-coded JPEG needs an encoder this
+#       machine does not have. So for those four the assertion is byte
+#       preservation, NOT decodability, and that limit is the reason this
+#       comment exists instead of a vaguer one.
+#
+# THE OVERCORRECTION, which is what trap 11 requires of a widened keep-list.
+# Keeping more markers is an exclusion like any other: every one of the five is
+# now a segment nothing looks inside again. Two tests stand against that.
+# test_a_decode_necessary_marker_does_not_shelter_the_metadata_around_it proves
+# the widening did not become "keep everything", and
+# test_a_structural_marker_cannot_be_used_as_a_hiding_place proves a payload
+# cannot ride through by wearing one of the five marker numbers.
+# ---------------------------------------------------------------------------
+
+# Where each marker is spliced in. DNL goes after the scan because B.2.5 puts
+# it there; the other four go in the header, which is a hand-built stream
+# rather than a shape any encoder here produces (see the comment above).
+AFTER_SCAN, IN_HEADER = "after the scan", "in the header"
+
+DECODE_NECESSARY = {
+    "DNL, the real line count for a frame whose SOF declares zero":
+        (0xDC, struct.pack(">HH", 4, 72), AFTER_SCAN),
+    "DHP, the frame header of a hierarchical sequence":
+        (0xDE, struct.pack(">H", 11) + b"\x08" + struct.pack(">HH", 72, 96)
+         + b"\x01" + b"\x01\x11\x00", IN_HEADER),
+    "EXP, which axes the next hierarchical frame expands":
+        (0xDF, struct.pack(">H", 3) + b"\x11", IN_HEADER),
+    "DAC, the arithmetic-coding conditioning table":
+        (0xCC, struct.pack(">H", 4) + b"\x00\x01", IN_HEADER),
+    "TEM, standalone, no payload to carry anything in":
+        (0x01, b"", IN_HEADER),
+}
+
+
+def splice(data: bytes, code: int, tail: bytes, where: str) -> bytes:
+    """Put `FF <code> <tail>` into a JPEG at the position the marker belongs."""
+    segment = bytes([0xFF, code]) + tail
+    if where == AFTER_SCAN:
+        at = first_top_level_eoi(data) - 2
+        return data[:at] + segment + data[at:]
+    return insert_after_leading_apps(data, segment)
+
+
+@pytest.fixture(scope="session")
+def dnl_bytes():
+    """
+    A JPEG that really carries DNL and really decodes. See the section comment.
+    """
+    base = _plain()
+    data = splice(base, 0xDC, struct.pack(">HH", 4, 72), AFTER_SCAN)
+    assert 0xDC in marker_codes(data), "the fixture does not carry a DNL marker"
+    assert pixels(data) == pixels(base), (
+        "the DNL fixture does not decode to the same picture as the JPEG it "
+        "was built from, so it is not a valid file and proves nothing"
+    )
+    return data, base
+
+
+def test_the_three_buckets_partition_every_marker_number():
+    """
+    THE RULE ITSELF, checked against T.81 Table B.1 rather than against the
+    engine's own arithmetic.
+
+    An enumerated keep-list is what removed five decode-necessary markers in
+    Phase 1, so what replaced it has to be a total function: every marker
+    number that can follow an 0xFF gets exactly one of KEEP, REMOVE, UNKNOWN,
+    and nothing falls off the end of a list again.
+    """
+    every = set(range(0x01, 0xFF))     # 0x00 is a stuffed byte, 0xFF is fill
+    assert SPEC_METADATA | SPEC_STRUCTURAL | SPEC_UNDEFINED == every, (
+        "the spec table does not account for every marker number: "
+        + repr(sorted(every - (SPEC_METADATA | SPEC_STRUCTURAL | SPEC_UNDEFINED)))
+    )
+    assert not SPEC_METADATA & SPEC_STRUCTURAL
+    assert not SPEC_METADATA & SPEC_UNDEFINED
+    assert not SPEC_STRUCTURAL & SPEC_UNDEFINED
+
+    disagreements = []
+    for code in sorted(every):
+        if code in SPEC_METADATA:
+            expected = REMOVE
+        elif code in SPEC_STRUCTURAL:
+            expected = KEEP
+        else:
+            expected = UNKNOWN
+        # A payload that is deliberately NOT one of the two kept identifiers,
+        # so APP0 and APP14 are judged as the carriers they are by default.
+        got = classify(Segment("marker", 0, 6, code, "x", b"\x00\x00\x00\x00"))
+        if got != expected:
+            disagreements.append(
+                "0x%02X: T.81 says %s, the engine says %s" % (code, expected, got))
+    assert not disagreements, "\n".join(disagreements)
+
+
+def test_the_five_markers_phase_1_removed_are_all_structural():
+    """
+    Named individually, so that deleting one from the engine's structural set
+    fails a test that says which one and why rather than a set-equality diff.
+    """
+    for code, name, why in [
+        (0x01, "TEM", "standalone arithmetic-coder marker"),
+        (0xCC, "DAC", "arithmetic-coding conditioning table"),
+        (0xDC, "DNL", "the real line count when SOF declares zero"),
+        (0xDE, "DHP", "the frame header of a hierarchical sequence"),
+        (0xDF, "EXP", "which axes the next hierarchical frame expands"),
+    ]:
+        got = classify(Segment("marker", 0, 4, code, name, b"\x00\x00"))
+        assert got == KEEP, (
+            "%s (0x%02X) is %s and is decode-necessary; the engine says %s. "
+            "Removing it damages any file that uses it." % (name, code, why, got))
+
+
+def test_the_two_identifier_keyed_rows_still_override_the_bucket():
+    """
+    APP0 and APP14 are in the METADATA bucket, so the identifier check has to
+    win for the two rows that are kept. This is the 2026-09-06 identifier
+    correction, re-asserted against the classifier that replaced the keep-list.
+    """
+    assert classify(Segment("marker", 0, 9, 0xE0, "APP0", b"JFIF\x00\x01\x01")) == KEEP
+    assert classify(Segment("marker", 0, 9, 0xE0, "APP0", b"JFXX\x00\x10")) == REMOVE
+    assert classify(Segment("marker", 0, 9, 0xEE, "APP14", b"Adobe\x00d\x00")) == KEEP
+    assert classify(Segment("marker", 0, 9, 0xEE, "APP14", b"NotAdobe\x00")) == REMOVE
+
+
+def test_a_dnl_bearing_jpeg_keeps_its_dnl_and_still_decodes(tmp_path, dnl_bytes):
+    """
+    MEASURED, not asserted from the specification. The keep path on a real file
+    that carries the marker: it survives, the file still decodes, and the
+    picture is byte-identical.
+    """
+    data, base = dnl_bytes
+    path = write(tmp_path, "dnl.jpg", data)
+    out, removed = scrub(path)
+
+    assert 0xDC in marker_codes(out), (
+        "DNL was removed. A file whose SOF declares a height of zero has no "
+        "height at all without it.")
+    assert out == data, (
+        "the engine rewrote a file that carried nothing removable: %r" % removed)
+    assert structural_violations(out) == []
+    assert pixels(out) == pixels(base)
+
+
+def test_the_spec_strict_zero_height_dnl_form_is_still_kept(tmp_path, dnl_bytes):
+    """
+    The form T.81 actually calls for: SOF declares Y=0 and DNL supplies the
+    real line count.
+
+    NOT MEASURED FOR DECODABILITY, deliberately and stated rather than implied.
+    libjpeg does not implement zero-height frames ("Empty JPEG image (DNL not
+    supported)"), so Pillow will not open this file and exiftool reports
+    ImageHeight 0. No decoder available here consumes it. What IS asserted is
+    the thing that matters to a metadata tool: the marker carrying the only
+    copy of the image height is preserved, and preserved byte for byte.
+    """
+    data, _base = dnl_bytes
+    sof = None
+    for code, start, _end, _payload in segments(data):
+        if code in {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
+                    0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}:
+            sof = start
+            break
+    assert sof is not None, "no SOF in the fixture"
+    # SOF layout after the marker: length(2) precision(1) height(2).
+    zero_height = bytearray(data)
+    struct.pack_into(">H", zero_height, sof + 5, 0)
+    zero_height = bytes(zero_height)
+    assert struct.unpack(">H", zero_height[sof + 5:sof + 7])[0] == 0
+
+    path = write(tmp_path, "dnl_zero_height.jpg", zero_height)
+    out, _removed = scrub(path)
+
+    assert out == zero_height, (
+        "the only record of this image's height is its DNL marker, and the "
+        "engine changed the file")
+    assert 0xDC in marker_codes(out)
+
+
+@pytest.mark.parametrize("label", sorted(DECODE_NECESSARY))
+def test_every_decode_necessary_marker_survives_byte_identical(tmp_path, label):
+    """
+    The keep path for all five, over a hand-built stream.
+
+    Byte preservation is what is asserted here and decodability is NOT, for
+    four of the five, because no encoder on this machine emits a hierarchical
+    or an arithmetic-coded JPEG. See the section comment for exactly which
+    decoder refused which fixture. DNL is measured properly in
+    test_a_dnl_bearing_jpeg_keeps_its_dnl_and_still_decodes.
+    """
+    code, tail, where = DECODE_NECESSARY[label]
+    base = _plain()
+    data = splice(base, code, tail, where)
+    assert code in marker_codes(data), (
+        "%s: the fixture does not carry the marker it claims" % label)
+
+    path = write(tmp_path, "structural.jpg", data)
+    out, removed = scrub(path)
+
+    assert code in marker_codes(out), "%s: removed by the scrub" % label
+    assert out == data, (
+        "%s: the file carried nothing removable but was rewritten anyway: %r"
+        % (label, removed))
+    assert structural_violations(out) == []
+
+
+@pytest.mark.parametrize("label", sorted(DECODE_NECESSARY))
+def test_a_decode_necessary_marker_does_not_shelter_the_metadata_around_it(
+        tmp_path, label):
+    """
+    OVERCORRECTION TEST for the widening. "Keep the structural markers" is one
+    bad edit away from "keep everything", and that edit would pass every test
+    above this one.
+
+    So: the same fixture, plus a COM and an APP1 each carrying a sentinel. The
+    structural marker must survive and both sentinels must be gone from the
+    output BYTES, which is the only evidence that means anything here.
+    """
+    code, tail, where = DECODE_NECESSARY[label]
+    com = sentinel("jpegkeepcom").encode()
+    app = sentinel("jpegkeepapp").encode()
+    data = _plain()
+    data = splice(data, code, tail, where)
+    data = insert_after_leading_apps(
+        data, b"\xff\xfe" + struct.pack(">H", len(com) + 2) + com)
+    data = insert_after_leading_apps(
+        data,
+        b"\xff\xe1" + struct.pack(">H", len(app) + 8) + b"Exif\x00\x00" + app)
+    assert com in data and app in data
+
+    path = write(tmp_path, "shelter.jpg", data)
+    out, removed = scrub(path)
+
+    assert code in marker_codes(out), "%s: the structural marker went" % label
+    assert com not in out, "%s: the COM sentinel survived" % label
+    assert app not in out, "%s: the APP1 sentinel survived" % label
+    assert structural_violations(out) == []
+    assert len(removed) >= 2, removed
+
+
+# A marker number is now a decision about whether to look inside a segment, so
+# a kept marker number is an exclusion in trap 11's sense: nothing inspects a
+# DNL again. Four of the five have a shape T.81 fixes exactly, and a segment
+# that does not have that shape is a payload wearing a marker number.
+MISSHAPEN = {
+    "a DNL carrying 4 KB instead of its two-byte line count":
+        (0xDC, 4096, AFTER_SCAN),
+    "an EXP carrying 4 KB instead of its one expansion byte":
+        (0xDF, 4096, IN_HEADER),
+    "a DAC with an odd payload, so not a whole number of entries":
+        (0xCC, 4095, IN_HEADER),
+}
+
+
+@pytest.mark.parametrize("label", sorted(MISSHAPEN))
+def test_a_structural_marker_cannot_be_used_as_a_hiding_place(tmp_path, label):
+    """
+    OVERCORRECTION TEST for the shapes. Restoring the five markers created five
+    new places nothing looks; this is what stops four of them being useful.
+    """
+    code, size, where = MISSHAPEN[label]
+    value = sentinel("jpeghiding").encode()
+    payload = (value * (size // len(value) + 1))[:size]
+    data = splice(_plain(), code,
+                  struct.pack(">H", size + 2) + payload, where)
+    assert value in data, "%s: the fixture does not carry its sentinel" % label
+
+    path = write(tmp_path, "hiding.jpg", data)
+    with pytest.raises(EngineError):
+        JpegEngine().strip_all(path)
+    with open(path, "rb") as handle:
+        assert handle.read() == data, (
+            "%s: the engine modified a file it refused" % label)
+
+
+def test_a_misshapen_dhp_is_refused_too(tmp_path):
+    """
+    DHP is the fourth shape, and it is the only one that is not a constant: its
+    length is 6 + 3*Nf, with Nf inside the payload. A payload that does not
+    agree with its own Nf is not a frame header.
+    """
+    value = sentinel("jpegdhp").encode()
+    payload = b"\x08" + struct.pack(">HH", 72, 96) + b"\x01" + value
+    data = splice(_plain(), 0xDE,
+                  struct.pack(">H", len(payload) + 2) + payload, IN_HEADER)
+    assert value in data
+
+    path = write(tmp_path, "dhp.jpg", data)
+    with pytest.raises(EngineError) as raised:
+        JpegEngine().strip_all(path)
+    assert "DHP" in str(raised.value)
+    with open(path, "rb") as handle:
+        assert handle.read() == data
+
+
+# The third bucket, one representative from each reserved range. None of these
+# is a metadata segment and none is a marker T.81 defines, so the engine must
+# refuse the file rather than choose for the user.
+UNDEFINED_MARKERS = {
+    "0x02, the bottom of the reserved RES range": 0x02,
+    "0x50, the middle of the reserved RES range": 0x50,
+    "0xBF, the top of the reserved RES range": 0xBF,
+    "0xC8 JPG, reserved for JPEG extensions": 0xC8,
+    "0xF0 JPG0, reserved for JPEG extensions": 0xF0,
+    "0xFD JPG13, reserved for JPEG extensions": 0xFD,
+}
+
+
+@pytest.mark.parametrize("label", sorted(UNDEFINED_MARKERS))
+def test_the_engine_refuses_an_undefined_marker(tmp_path, label):
+    """
+    THE THIRD ANSWER. png_engine.py refuses a file carrying an unrecognised
+    CRITICAL chunk because removing it could destroy image data and keeping it
+    could keep a carrier. A marker outside T.81's table is the same position in
+    a different container, and it gets the same answer.
+
+    Refusing means the input is left EXACTLY as it was, with no temporary file
+    behind it: the user still has their file and now knows something is in it.
+    """
+    code = UNDEFINED_MARKERS[label]
+    value = sentinel("jpegundefined").encode()
+    data = splice(_plain(), code,
+                  struct.pack(">H", len(value) + 2) + value, IN_HEADER)
+    assert value in data
+
+    path = write(tmp_path, "undefined.jpg", data)
+    with pytest.raises(EngineError) as raised:
+        JpegEngine().strip_all(path)
+    assert "0xFF%02X" % code in str(raised.value), str(raised.value)
+
+    with open(path, "rb") as handle:
+        assert handle.read() == data, (
+            "%s: the engine modified a file it refused" % label)
+    assert not [name for name in os.listdir(str(tmp_path))
+                if name.startswith(".metascrub-")], (
+        "%s: a temporary file was left behind" % label)
+
+
+def test_neither_guess_is_taken_on_an_undefined_marker(tmp_path):
+    """
+    The refusal has to be a refusal, not a quiet version of one of the two
+    guesses. Both wrong answers are named here so that a future "just drop it"
+    or "just keep it" edit fails on the reason rather than on a message string.
+    """
+    value = sentinel("jpegneither").encode()
+    data = splice(_plain(), 0xC8,
+                  struct.pack(">H", len(value) + 2) + value, IN_HEADER)
+    path = write(tmp_path, "neither.jpg", data)
+
+    with pytest.raises(EngineError):
+        JpegEngine().strip_all(path)
+
+    with open(path, "rb") as handle:
+        after = handle.read()
+    assert value in after, (
+        "the engine chose 'remove it', which can destroy image data in a file "
+        "using a JPEG Part 3 extension")
+    assert after == data, (
+        "the engine chose 'keep it and call the file clean', which is the "
+        "fail-open this project exists to refuse")
+
+
+def test_the_structural_gate_catches_an_undefined_marker_that_survived():
+    """
+    MUTATION CHECK for the gate itself. structural_violations() is what every
+    other test in this file trusts; an engine that started shipping undefined
+    markers must not slip past it.
+    """
+    data = splice(_plain(), 0xC8, struct.pack(">H", 6) + b"\x00\x00\x00\x00",
+                  IN_HEADER)
+    violations = structural_violations(data)
+    assert violations, "the gate did not notice a reserved marker in the output"
+    assert any("0xC8" in v for v in violations), violations

@@ -15,7 +15,7 @@ copying the entropy-coded scan data through byte for byte. It never decodes and
 never re-encodes: the compressed image data in the output is the same bytes it
 was in the input, so a scrub can cost image quality only if this file has a bug.
 
-THE THREE THINGS THAT MAKE IT DIFFERENT FROM A NAIVE STRIPPER
+THE FOUR THINGS THAT MAKE IT DIFFERENT FROM A NAIVE STRIPPER
 
 1. THE KEEP-LIST IS KEYED ON THE IDENTIFIER STRING, NOT THE MARKER NUMBER.
    Measured 2026-09-06: an APP0 whose identifier is `JFXX` carries a complete
@@ -70,6 +70,15 @@ THE THREE THINGS THAT MAKE IT DIFFERENT FROM A NAIVE STRIPPER
    unconditionally and accept sRGB rendering: a colour shift is visible and
    recoverable, a custom identifying profile is neither.
 
+4. THE RULE IS A THREE-WAY CLASSIFICATION AND THE THIRD ANSWER IS "REFUSE".
+   A marker is a metadata carrier (APPn, COM) and is removed, or it is a
+   marker ISO/IEC 10918-1 defines and is kept, or it is neither and the file
+   is refused. Corrected 2026-09-06 after the first implementation removed
+   DNL, DHP, EXP, DAC and TEM: an enumerated keep-list silently deletes every
+   marker whoever wrote the list did not think of, and all five of those are
+   decode-necessary. See _METADATA_CODES and _STRUCTURAL_CODES below for the
+   buckets and for what each restored marker does.
+
 WHERE THIS ENGINE IS WIRED IN
 
 Nowhere. The .jpg and .jpeg rows in CAPABILITIES still route to the exiftool
@@ -98,6 +107,15 @@ COM = 0xFE
 APP0 = 0xE0
 APP14 = 0xEE
 
+# The five decode-necessary markers Phase 1 removed. TEM is standalone; the
+# other four carry a length field. See _STRUCTURAL_CODES for why they are kept
+# now and _STRUCTURAL_SHAPE for why keeping them is not the whole answer.
+TEM = 0x01
+DAC = 0xCC
+DNL = 0xDC
+DHP = 0xDE
+EXP = 0xDF
+
 # Start Of Frame, every flavour: baseline, extended, progressive, lossless,
 # differential and arithmetic. 0xC4 is DHT, 0xC8 is the reserved JPG marker and
 # 0xCC is DAC; none of the three is a SOF even though they sit in the range.
@@ -105,32 +123,109 @@ _SOF_CODES = frozenset(
     code for code in range(0xC0, 0xD0) if code not in (0xC4, 0xC8, 0xCC)
 )
 
-# The keep-list rows that are a marker number and nothing else, because they
-# carry no identifier and cannot carry a payload that is not decode data.
-# RST0..RST7 are in here for completeness; in practice they live inside the
-# entropy-coded run and are copied through with it rather than visited.
+# THE RULE IS A CLASSIFICATION, NOT AN ENUMERATION.
 #
-# DNL (0xDC), DHP (0xDE), EXP (0xDF), DAC (0xCC) and TEM (0x01) are NOT here,
-# and that is a decision rather than an oversight. Section 2.1 says "keep only
-# these markers" and names none of the five; Part 2's opening says a whitelist
-# removes everything else INCLUDING unknown structures. The reference stripper
-# written during Phase 0 recon keeps DNL, DHP and EXP, so the two disagree and
-# this file follows the specification.
+# Phase 1 implemented section 2.1's "keep only these markers" as a literal
+# keep-list, and because the section enumerates nothing outside the markers
+# Pillow happens to emit, five decode-necessary markers fell off the end of it:
+# DNL, DHP, EXP, DAC and TEM. All five were removed. That is an omission in the
+# specification rather than a decision, and the fix is not five more names on a
+# list, because the next marker the list forgets would be removed too.
 #
-# What that costs, stated rather than hidden: DHP and EXP belong to
-# hierarchical mode and DNL to an encoder that does not know the image height
-# in advance. Removing one from a file that genuinely carried it would damage
-# that file. NOT MEASURED either way, because no encoder available here emits
-# any of them: Pillow's baseline, progressive, optimised, CMYK and
-# restart-interval paths were walked on 2026-09-06 and none appeared, so no
-# fixture here has ever carried one and neither choice has been tested against
-# a real file. If one ever turns up, refusing it outright is probably a better
-# answer than either keeping or dropping the marker, because this engine has
-# no other handling for hierarchical mode; that is a decision to make with a
-# fixture in hand rather than now.
-_KEEP_CODES = frozenset(
-    {SOI, EOI, SOS, DQT, DHT, DRI} | set(range(0xD0, 0xD8))
+# So every marker in the stream lands in exactly one of three buckets:
+#
+#   METADATA   APPn and COM. These are the segments that carry EXIF, XMP,
+#              IPTC, ICC, MPF, JUMBF, thumbnails and free text. REMOVED,
+#              except the two identifier-keyed rows in _KEEP_IDENTIFIERS.
+#   STRUCTURAL the markers T.81 Table B.1 DEFINES, every one of which drives
+#              the decoder and none of which has anywhere to put a name, a
+#              place or a time. KEPT.
+#   NEITHER    a reserved or undefined marker: 0x02..0xBF (RES), 0xC8 (JPG),
+#              0xF0..0xFD (JPGn). REFUSED, with EngineError, leaving the input
+#              exactly as it was.
+#
+# The third bucket is the point. This engine cannot know whether an undefined
+# marker carries a name or carries image data, so removing it may destroy the
+# picture and keeping it may keep a carrier. That is the identical position
+# png_engine.py takes on an unrecognised CRITICAL chunk, and it is taken here
+# for the identical reason: guessing in either direction is a shortcut, and
+# refusing costs the user one file they can look at rather than one file they
+# wrongly believe is clean.
+#
+# WHAT EACH OF THE FIVE RESTORED MARKERS ACTUALLY DOES, since "decode-necessary"
+# is a claim and not an argument:
+#   DNL (0xDC) carries the real number of lines for a frame whose SOF declares
+#              a height of zero, i.e. an encoder that did not know the height
+#              when it wrote the header. Remove it and the image has no height.
+#   DHP (0xDE) declares the frame parameters of a HIERARCHICAL sequence; it is
+#   EXP (0xDF) the SOF of the progression, and EXP says which axes the next
+#              frame expands. Remove either and the hierarchy cannot be walked.
+#   DAC (0xCC) is the arithmetic-coding conditioning table, the arithmetic
+#              equivalent of DHT. Remove it from an arithmetic-coded JPEG and
+#              the entropy decoder has no conditioning.
+#   TEM (0x01) is a standalone marker reserved for arithmetic-coder temporary
+#              use. It has no payload at all, so there is nothing in it to
+#              remove and nothing in it to hide.
+# None of the five has a free-text or timestamp field. Their payloads are
+# fixed-shape numbers, which is what _STRUCTURAL_SHAPE below enforces.
+_METADATA_CODES = frozenset(range(APP0, APP0 + 16)) | {COM}
+
+_STRUCTURAL_CODES = frozenset(
+    {SOI, EOI, SOS, DQT, DHT, DRI, TEM, DAC, DNL, DHP, EXP}
+    | set(range(0xD0, 0xD8))          # RST0..RST7
 ) | _SOF_CODES
+
+# KEEPING A MARKER BY NUMBER IS ITSELF AN EXCLUSION, so it gets the same
+# treatment trap 11 demands of one. "Keep 0xDC" implemented as "keep whatever
+# arrives under 0xDC" would let a 60 KB payload ride through inside a segment
+# nothing looks at again, and DNL's real payload is two bytes. Four of the five
+# restored markers have a shape T.81 fixes exactly, so the shape is checked and
+# a segment that does not have it is refused rather than kept.
+#
+# Keyed on the DECLARED payload, which is `Ld - 2` bytes, i.e. everything after
+# the length field. Each entry returns None when the shape is right and the
+# expected shape as text when it is not.
+#
+# DRI, DQT, DHT and SOF are deliberately NOT here. They were kept before this
+# change and their shapes are unchanged by it; bounding them is a separate
+# piece of work with its own evidence, and doing it silently inside this one
+# would hide it. Named here so it is a known gap rather than an assumed one.
+def _shape_dnl(payload: bytes):
+    # B.2.5: Ld is always 4, NL is one two-byte number of lines.
+    return None if len(payload) == 2 else "exactly 2 bytes (Ld=4)"
+
+
+def _shape_exp(payload: bytes):
+    # B.3.3: Ld is always 3, one byte holding Eh and Ev as two nibbles.
+    return None if len(payload) == 1 else "exactly 1 byte (Ld=3)"
+
+
+def _shape_dhp(payload: bytes):
+    # B.3.2: DHP has the syntax of a frame header. P(1) Y(2) X(2) Nf(1) then
+    # Nf component specifications of 3 bytes each.
+    if len(payload) < 6:
+        return "at least 6 bytes (P, Y, X and Nf)"
+    expected = 6 + 3 * payload[5]
+    if len(payload) != expected:
+        return "6 + 3*Nf = %d bytes for the Nf=%d it declares" % (
+            expected, payload[5])
+    return None
+
+
+def _shape_dac(payload: bytes):
+    # B.2.4.3: Ld = 2 + 2*n, i.e. a whole number of two-byte conditioning
+    # entries, and at least one of them.
+    if len(payload) < 2 or len(payload) % 2:
+        return "a whole number of 2-byte conditioning entries, at least one"
+    return None
+
+
+_STRUCTURAL_SHAPE = {
+    DNL: _shape_dnl,
+    EXP: _shape_exp,
+    DHP: _shape_dhp,
+    DAC: _shape_dac,
+}
 
 # The two keep-list rows that are keyed on the identifier string. See point 1
 # in the module docstring: this table, not the marker number, is the rule.
@@ -312,12 +407,28 @@ def _walk(data: bytes) -> Iterator[Segment]:
     raise EngineError("no EOI marker: this JPEG is truncated")
 
 
-def _keep(segment: Segment) -> bool:
-    """The section 2.1 keep-list, keyed on the identifier where there is one."""
+KEEP = "keep"
+REMOVE = "remove"
+UNKNOWN = "unknown"
+
+
+def classify(segment: Segment) -> str:
+    """
+    KEEP, REMOVE or UNKNOWN for one marker segment. The whole rule, in one
+    place, and the only thing rebuild() consults.
+
+    Exported without an underscore because a caller on a phone, and every test
+    of this rule, needs to ask the question without re-deriving the answer.
+    """
     code = segment.code
-    if code in _KEEP_IDENTIFIERS:
-        return segment.payload.startswith(_KEEP_IDENTIFIERS[code])
-    return code in _KEEP_CODES
+    if code in _METADATA_CODES:
+        expected = _KEEP_IDENTIFIERS.get(code)
+        if expected is not None and segment.payload.startswith(expected):
+            return KEEP
+        return REMOVE
+    if code in _STRUCTURAL_CODES:
+        return KEEP
+    return UNKNOWN
 
 
 def _describe(segment: Segment) -> str:
@@ -347,15 +458,47 @@ def rebuild(data: bytes) -> Tuple[bytes, List[str]]:
             # Point 2 of the contract: the compressed scan is copied through,
             # never decoded and never re-encoded.
             out += data[segment.start:segment.end]
-        elif segment.kind == "trailer":
+            continue
+        if segment.kind == "trailer":
             removed.append(
                 f"trailing data after EOI ({segment.size} bytes); a motion "
                 "photo trailer is a complete MP4 carrying its own GPS"
             )
-        elif _keep(segment):
+            continue
+
+        verdict = classify(segment)
+        if verdict == UNKNOWN:
+            # Neither a metadata carrier nor a marker T.81 defines. Refuse.
+            # png_engine.py's unrecognised-CRITICAL-chunk decision, applied to
+            # the marker stream for the same reason: removing it could destroy
+            # image data and keeping it could keep a carrier.
+            raise EngineError(
+                f"this JPEG carries an undefined marker 0xFF{segment.code:02X} "
+                f"({segment.size} bytes) at offset {segment.start}. It is "
+                f"neither a metadata segment (APPn or COM) nor a marker "
+                f"ISO/IEC 10918-1 defines, so removing it could destroy image "
+                f"data and keeping it could keep a carrier. This file is "
+                f"refused rather than guessed at."
+            )
+        if verdict == KEEP:
+            shape = _STRUCTURAL_SHAPE.get(segment.code)
+            if shape is not None:
+                wrong = shape(segment.payload)
+                if wrong is not None:
+                    # A kept marker is a marker nothing inspects again, so an
+                    # oversized one is a hiding place. Trap 11, applied to the
+                    # keep side of the rule.
+                    raise EngineError(
+                        f"{segment.name} at offset {segment.start} carries "
+                        f"{len(segment.payload)} bytes, but {segment.name} is "
+                        f"defined to carry {wrong}. A structural marker carrying "
+                        f"more than its own fields is a payload wearing a "
+                        f"marker number, and this engine keeps {segment.name} "
+                        f"without looking inside it. Refused."
+                    )
             out += data[segment.start:segment.end]
-        else:
-            removed.append(_describe(segment))
+            continue
+        removed.append(_describe(segment))
     return bytes(out), removed
 
 

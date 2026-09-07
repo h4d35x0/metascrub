@@ -29,7 +29,12 @@ WHAT THIS REMOVES, AND WHY EACH ONE IS HERE
 
   trailing bytes     everything past the declared RIFF size. Measured: silent
                      on a normal exiftool read, so no needle is ever generated
-                     for it and the residual scan cannot see it.
+                     for it and the residual scan cannot see it. Removed AND
+                     reported loudly, with the byte count, because a user whose
+                     photo was carrying a second file should be told so rather
+                     than quietly handed a smaller one. See
+                     _TRAILING_IS_REPORTED_LOUDLY for why this engine removes
+                     what structure.py can only refuse.
 
   VP8X, where the    a WebP with no VP8X chunk cannot carry metadata at all:
   file does not      the simple form is RIFF/WEBP plus exactly one VP8 or VP8L
@@ -108,6 +113,44 @@ FLAGS_RESERVED = 0x80 | 0x40 | 0x01
 
 VP8_START_CODE = b"\x9d\x01\x2a"
 VP8L_SIGNATURE = 0x2F
+
+# TRAILING DATA IS REMOVED HERE AND REPORTED LOUDLY, AND THE TWO ARE SEPARATE
+# DECISIONS.
+#
+# docs/ANDROID-MEDIA-BUILD.md section 2.3 describes the SHIPPED tool failing
+# closed on bytes past the declared RIFF size and calls that correct. It is
+# correct there and it is not correct here, because the two are answering
+# different questions. metascrub/structure.py is a REPORTER: it can see that a
+# region is unaccounted for and it cannot clean it, so refusing is the whole of
+# what it can honestly do. This engine rebuilds the container from its chunk
+# inventory, so the trailer is gone by construction and the image bytes are
+# byte-identical either way. Refusing to do a thing you can provably do, and
+# handing the user back their file with the payload still in it, is the worse
+# of the two outcomes.
+#
+# What must NOT be lost in that trade is the telling. A silent removal of a
+# smuggled 8 KB MP4 leaves the user believing they had an ordinary photo. They
+# did not, and that is a fact about their file worth more than the cleaning is.
+# So this is surfaced the way png_engine.py surfaces its iCCP removal: a NOTE
+# line naming the size and saying in words that nothing in the container
+# accounted for it.
+#
+# The size is in the message on purpose. "Trailing data was removed" is one
+# byte of padding or a whole video, and the user cannot tell which without it.
+_TRAILING_IS_REPORTED_LOUDLY = True
+
+
+def _trailing_note(trailing: int, declared_total: int) -> str:
+    """The one line a user gets about a hidden payload. Keep the size in it."""
+    return (
+        f"NOTE: removed {trailing} bytes of trailing data past the declared "
+        f"RIFF size. The container declares this WebP is {declared_total} "
+        f"bytes and the file held {declared_total + trailing}; nothing in the "
+        f"container accounted for the difference. Data hidden there is not "
+        f"reported by an exiftool read, so no residual scan can generate a "
+        f"needle for it. A trailer this shape is how a complete second file, "
+        f"with its own metadata and its own GPS, rides along inside a photo."
+    )
 
 
 class Chunk:
@@ -281,7 +324,8 @@ def scrub_bytes(data: bytes) -> Tuple[bytes, List[str]]:
     chunks, trailing = parse(data)
     targeted: List[str] = []
     if trailing:
-        targeted.append(f"{trailing} bytes past the declared RIFF size")
+        # REPORTED LOUDLY, not just removed. See _TRAILING_IS_REPORTED_LOUDLY.
+        targeted.append(_trailing_note(trailing, len(data) - trailing))
 
     kept: List[Chunk] = []
     vp8x: Optional[Chunk] = None

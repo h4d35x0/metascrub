@@ -1036,3 +1036,151 @@ def test_mutation_clearing_the_flags_instead_of_removing_the_chunks_is_caught(
 
     with pytest.raises(AssertionError, match="metadata chunk"):
         assert_structurally_clean(path)
+
+
+# ------------------------------------------- the trailer report, not just the removal
+#
+# WHY THIS SECTION EXISTS AT ALL
+#
+# docs/ANDROID-MEDIA-BUILD.md section 2.3 says the shipped tool FAILS CLOSED on
+# bytes past the declared RIFF size, and calls that correct. This engine removes
+# them instead. Both are right, for different code: metascrub/structure.py is a
+# reporter that cannot clean the carrier, so refusing is the whole of what it can
+# honestly do, while this engine rebuilds the container from its chunk inventory
+# and the trailer is gone by construction with the image bytes untouched.
+#
+# The thing that would be lost in that trade, and that these tests exist to
+# stop being lost, is the TELLING. A silent removal of a smuggled 8 KB MP4
+# hands the user a slightly smaller file and leaves them believing they had an
+# ordinary photo. They did not. So the report has to say so, with the size in
+# it, the way png_engine.py's iCCP NOTE says what a user just lost.
+#
+# The three assertions below are the whole contract: the report SAYS something,
+# it says HOW MUCH, and it says the bytes were UNACCOUNTED FOR rather than a
+# part of the picture. Asserting only "removed is non-empty" would pass on a
+# report that said "webp container rewrite".
+
+
+def _trailer_report(tmp_path, payload: bytes):
+    """Append `payload` to a plain WebP, scrub it, and return (report, before)."""
+    path = plain_lossy(tmp_path)
+    with open(path, "rb") as handle:
+        pristine = handle.read()
+    with open(path, "ab") as handle:
+        handle.write(payload)
+    with open(path, "rb") as handle:
+        assert trailing_bytes(handle.read()) == len(payload)
+    return scrub(path), pristine, path
+
+
+def test_the_trailer_report_names_the_number_of_bytes_that_were_hidden(tmp_path):
+    """
+    The size is the part a user cannot get anywhere else. "Trailing data was
+    removed" is one byte of padding or a whole video, and those are not the
+    same news.
+    """
+    hidden = sentinel("webptrailersize").encode()
+    payload = hidden + b"\x00" * 8192
+    removed, pristine, path = _trailer_report(tmp_path, payload)
+
+    lines = [line for line in removed if "past the declared RIFF size" in line]
+    assert lines, removed
+    assert any(str(len(payload)) in line for line in lines), (
+        "the report does not say how many bytes were removed, so the user "
+        "cannot tell a byte of padding from a smuggled video: %r" % lines)
+
+    with open(path, "rb") as handle:
+        out = handle.read()
+    assert hidden not in out
+    assert out == pristine
+
+
+def test_the_trailer_report_says_the_bytes_were_unaccounted_for(tmp_path):
+    """
+    The other half of the news: not merely that bytes went, but that NOTHING IN
+    THE CONTAINER CLAIMED THEM. That is what makes a trailer a hiding place
+    rather than a formatting quirk, and it is why a WebP that was carrying one
+    is worth telling its owner about.
+    """
+    removed, _pristine, _path = _trailer_report(
+        tmp_path, b"ftypmp42" + b"\x00" * 4096)
+
+    lines = [line for line in removed if "past the declared RIFF size" in line]
+    assert lines, removed
+    line = lines[0]
+    assert line.startswith("NOTE:"), (
+        "a removal the user cannot otherwise discover is not an ordinary line "
+        "item; png_engine.py marks this class of thing NOTE: %r" % line)
+    assert "accounted for" in line, (
+        "the report does not say the bytes were unaccounted for: %r" % line)
+    assert "exiftool" in line, (
+        "the report does not say why nothing else in the pipeline saw this: "
+        "%r" % line)
+
+
+def test_a_one_byte_trailer_is_reported_as_loudly_as_an_eight_kilobyte_one(
+        tmp_path):
+    """
+    OVERCORRECTION TEST for the report. A size threshold is the obvious next
+    "improvement" and it would be a fail-open: a covert channel does not have
+    to be big, and the engine cannot know what one byte means.
+
+    Also proves the report is generated rather than hard-coded, since the two
+    fixtures differ only in how much was appended.
+    """
+    small, _pristine, _path = _trailer_report(tmp_path, b"\x01")
+    small_lines = [line for line in small if "past the declared RIFF size" in line]
+    assert small_lines, (
+        "a one-byte trailer was removed silently. Size is not a reason to stop "
+        "telling the user: %r" % small)
+    line = small_lines[0]
+    assert line.startswith("NOTE:"), (
+        "a one-byte trailer was demoted to an ordinary line item: %r" % line)
+    assert "1 bytes" in line and "accounted for" in line, line
+
+    big, _pristine, _path = _trailer_report(tmp_path, b"\x02" * 8192)
+    big_lines = [line for line in big if "past the declared RIFF size" in line]
+    assert big_lines and big_lines[0].startswith("NOTE:"), big
+    assert "8192 bytes" in big_lines[0], big_lines
+    assert big_lines[0] != line, (
+        "the two reports are identical, so the size in them is hard-coded "
+        "text rather than a measurement of this file")
+
+
+def test_the_engine_removes_what_structure_py_can_only_refuse(tmp_path):
+    """
+    The section 2.3 disagreement, asserted rather than argued.
+
+    structure.py fails closed on a trailer because it cannot clean one. This
+    engine cleans it, and the evidence that cleaning is the better answer is
+    that the image comes back BYTE-IDENTICAL: nothing was traded away for the
+    removal, so refusing would have cost the user their trailer-free file for
+    nothing.
+    """
+    hidden = sentinel("webpstructure").encode()
+    path = plain_lossy(tmp_path)
+    with open(path, "rb") as handle:
+        pristine = handle.read()
+    before = Image.open(path)
+    before.load()
+    before_pixels = before.tobytes()
+
+    with open(path, "ab") as handle:
+        handle.write(hidden + b"\x00" * 2048)
+
+    # What structure.py would do with this file, restated by the independent
+    # gate in this file: it is not structurally clean, and it cannot be made so
+    # by anything that only reports.
+    with pytest.raises(AssertionError, match="past the declared RIFF size"):
+        assert_structurally_clean(path)
+
+    removed = scrub(path)
+    assert any("past the declared RIFF size" in line for line in removed), removed
+
+    with open(path, "rb") as handle:
+        out = handle.read()
+    assert out == pristine, "the removal was not free after all"
+    after = Image.open(path)
+    after.load()
+    assert after.tobytes() == before_pixels
+    assert_structurally_clean(path)
