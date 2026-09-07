@@ -8,11 +8,14 @@ from ..capabilities import Engine
 from .av_engine import AvEngine
 from .base import BaseEngine, EngineError, EngineUnavailable
 from .exiftool_engine import ExifToolEngine
+from .jpeg_engine import JpegEngine
 from .odf_engine import OdfEngine
+from .png_engine import PngEngine
 from .ole2_engine import Ole2Engine
 from .ooxml_engine import OoxmlEngine
 from .pdf_engine import PdfEngine
 from .svg_engine import SvgEngine
+from .webp_engine import WebpEngine
 
 _REGISTRY: Dict[Engine, BaseEngine] = {
     Engine.EXIFTOOL: ExifToolEngine(),
@@ -22,6 +25,11 @@ _REGISTRY: Dict[Engine, BaseEngine] = {
     Engine.OLE2: Ole2Engine(),
     Engine.AV: AvEngine(),
     Engine.SVG: SvgEngine(),
+    # Phase 1 stubs. available() reports False so `doctor` is honest
+    # about them; no CAPABILITIES row routes here yet.
+    Engine.JPEG: JpegEngine(),
+    Engine.PNG: PngEngine(),
+    Engine.WEBP: WebpEngine(),
 }
 
 

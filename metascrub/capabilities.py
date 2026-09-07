@@ -30,6 +30,19 @@ class Engine(str, Enum):
     AV = "av"               # ffmpeg remux, stream copy
     SVG = "svg"             # XML text rewrite; exiftool cannot write SVG at all
 
+    # Phase 1 of the Android media build. Pure-Python container surgery, no
+    # exiftool and no ffmpeg, because neither can run on a phone.
+    #
+    # These are NOT wired into CAPABILITIES. Every row for .jpg, .png and .webp
+    # still says EXIFTOOL, which works correctly on the desktop and shipped in
+    # 1.0.2. Switching the desktop default to these engines is a separate and
+    # deliberate decision, to be made once they are proven against the exiftool
+    # oracle, not a side effect of adding them. Until then they are reachable
+    # only from tests and from the future mobile build.
+    JPEG = "jpeg"           # APPn/COM marker surgery, plus the post-EOI trailer
+    PNG = "png"             # ancillary chunk whitelist
+    WEBP = "webp"           # RIFF chunk whitelist; drop VP8X where possible
+
 
 class Completeness(str, Enum):
     """
