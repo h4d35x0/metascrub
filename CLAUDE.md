@@ -130,6 +130,10 @@ embeds a unique sentinel and the assertion searches the bytes for it.
 | `metascrub/exif_io.py` | shared exiftool session, `MetadataRead`, `ReadOutcome` |
 | `metascrub/capabilities.py` | format table: engine + completeness per extension |
 | `metascrub/engines/` | exiftool, pdf (pikepdf), ooxml (zip), odf (zip), ole2 (olefile), av (ffmpeg), svg (XML text) |
+| `metascrub/engines/` (mobile) | jpeg, png, webp, isobmff. Pure Python, no exiftool and no ffmpeg, because neither runs on a phone. Only isobmff is WIRED: `.heic/.heif/.avif` route to it because exiftool cannot remove a HEIF ICC profile at all. |
+| `metascrub/isobmff.py` | the ISO base media box walker the isobmff engine parses with |
+| `metascrub/gps_verify.py` | structural GPS check; the byte scan can never see a coordinate, because EXIF stores rationals. NOT wired into verify.py yet |
+| `android/` | Chaquopy app with a share-target activity; verified scrubbing on a device |
 | `metascrub/gui.py` | Tkinter window; a view over MetadataScrubber, never a fork |
 | `metascrub/theme.py` | Windows 95 palette and its contrast floor |
 | `metascrub/selftest.py` | end-to-end proof for a new machine |
@@ -143,7 +147,7 @@ embeds a unique sentinel and the assertion searches the bytes for it.
 ## Commands
 
 ```bash
-python -m pytest tests/ -q          # 986 passed, 5 skipped, dev machine, 2026-09-06
+python -m pytest tests/ -q          # 1472 passed, 5 skipped, dev machine, 2026-09-07
 python -m metascrub selftest        # end-to-end, including a real round trip
 python -m metascrub doctor          # can the engines start
 python -m metascrub gui
@@ -151,11 +155,10 @@ python -m metascrub gui
 
 The 5 skips are intentional: .doc, .xls, .ppt and .svg are PARTIAL so they skip
 the COMPLETE-formats check, and one test of the missing-LibreOffice path skips
-where LibreOffice is present. Measured on the dev machine 2026-09-06 after the
-structural-scan fix: 986 passed, 5 skipped, 5m46s. The 899 figure this file
-carried until then was stale: three commits added tests after it was written,
-and the count is an environment fact rather than a gate. Compare TOTALS and
-FAILURES, then read every skip reason with `-rs`.
+where LibreOffice is present. Measured on the dev machine 2026-09-07 after the
+HEIC routing fix: 1472 passed, 5 skipped, 8m47s. This number moves fast right
+now; it was 899, then 986, then 1345. It is an environment fact rather than a
+gate. Compare TOTALS and FAILURES, then read every skip reason with `-rs`.
 
 A pass count is an environment fact, not a gate. Compare TOTALS and FAILURES
 first, then read every skip reason with `-rs`. The same tree measured 291/5 on

@@ -45,6 +45,27 @@ Add a walker returning a list of human-readable descriptions of unaccounted
 regions, and register it in _WALKERS. A format with no walker returns
 `applicable=False`, which means this check has no opinion and the verdict is
 unchanged. That is why adding this module cannot regress the other formats.
+
+ADDING A WALKER TO A FORMAT THAT ALREADY SHIPS IS A DIFFERENT ACT, AND IT CAN.
+
+That sentence above holds for introducing the module. It does not hold for
+registering a new extension, which moves that format from "no opinion" to a
+verdict `verify.py` maps to STRUCTURE_UNACCOUNTED or, on a parse failure, to
+UNVERIFIED. One false positive turns a correctly scrubbed holiday photo into a
+failed verification, which is worse than the gap it closes. So the corpus is
+the deliverable, not the walker: a new walker is measured against real device
+output for the format, before and after scrubbing, and it does not ship if
+there is a region of a real untouched device file it cannot account for.
+
+JPEG and ISO base media were added on 2026-09-07 under that rule and measured
+against sixteen real device files: iPhone HEICs including one whose Exif item
+ends on the last byte of the file, an iPhone Live Photo `.mov` with no `ftyp`
+box at all, geotagged Nokia and Samsung MP4s, an AVIF, a Pixel 2 with nothing
+after its EOI, and three real trailers (two Google motion photo conventions and
+a Samsung SEF block). Zero false positives before or after scrubbing; the three
+trailers were reported with byte counts matching an independent instrument's
+measurement exactly. tests/test_structure.py holds that corpus check, and skips
+it where the corpus is absent.
 """
 
 from __future__ import annotations
@@ -227,12 +248,374 @@ def _walk_gif(data: bytes) -> List[str]:
     return out
 
 
+# ---------------------------------------------------------------- JPEG
+
+# JPEG has no chunk table to compare against, so the question this walker asks
+# is the other half of the module contract: does every byte belong to a marker
+# segment, to the entropy-coded scan that follows a SOS, or to the EOI. There
+# is no third place for a byte to live, which makes "unaccounted" unusually
+# crisp here compared with the chunked formats above.
+#
+# The measured carrier is the TRAILER. A Google Motion Photo appends a complete
+# MP4, with its own GPS, after the JPEG's EOI, and a Samsung SEF block is
+# discovered backward from the last bytes of the file and is referenced by
+# nothing in any marker. exiftool names such a blob and never says what is
+# inside it, so the residual scan can construct no needle for the video's
+# coordinates. That is trap 10 again, and it is exactly what this walker sees.
+#
+# REACHING THE EOI REQUIRES WALKING, NEVER SEARCHING. An APP0/JFXX segment or
+# an EXIF thumbnail is a complete JPEG with its own `FF D9` inside it, so a
+# search for the first EOI byte pair lands in the thumbnail and reports the
+# entire real image as a trailer. Every segment below is consumed by its
+# declared length, so the only EOI this can reach is the outer one.
+
+_JPEG_SOI = 0xD8
+_JPEG_EOI = 0xD9
+_JPEG_SOS = 0xDA
+
+# Markers with no length field: TEM, SOI, EOI and RST0..RST7. Everything else
+# is `FF <code> <two-byte length including itself> <payload>`.
+_JPEG_STANDALONE = frozenset({0x01, _JPEG_SOI, _JPEG_EOI} | set(range(0xD0, 0xD8)))
+
+_JPEG_NAMES = {
+    0x01: "TEM", 0xC4: "DHT", 0xCC: "DAC", 0xD8: "SOI", 0xD9: "EOI",
+    0xDA: "SOS", 0xDB: "DQT", 0xDC: "DNL", 0xDD: "DRI", 0xDE: "DHP",
+    0xDF: "EXP", 0xFE: "COM",
+}
+
+
+def _jpeg_name(code: int) -> str:
+    if 0xE0 <= code <= 0xEF:
+        return "APP%d" % (code - 0xE0)
+    if 0xD0 <= code <= 0xD7:
+        return "RST%d" % (code - 0xD0)
+    if 0xC0 <= code <= 0xCF and code not in (0xC4, 0xC8, 0xCC):
+        return "SOF%d" % (code - 0xC0)
+    return _JPEG_NAMES.get(code, "marker 0x%02X" % code)
+
+
+def _jpeg_scan_end(data: bytes, start: int) -> Optional[int]:
+    """
+    Offset of the marker that ends the entropy-coded scan starting at `start`.
+
+    Inside a scan T.81 permits exactly three things after an 0xFF byte: a
+    stuffed 0x00, a restart marker RST0..RST7, or more 0xFF fill. Anything else
+    is the next real marker and ends the scan. Returns None when the data runs
+    to the end of the file with no closing marker, which means truncation.
+    """
+    length = len(data)
+    at = start
+    while at + 1 < length:
+        if data[at] != 0xFF:
+            at += 1
+            continue
+        following = data[at + 1]
+        if following == 0xFF:
+            at += 1                     # fill; the marker may still follow
+            continue
+        if following == 0x00 or 0xD0 <= following <= 0xD7:
+            at += 2                     # stuffed byte, or a restart marker
+            continue
+        return at
+    return None
+
+
+def _walk_jpeg(data: bytes) -> List[str]:
+    length = len(data)
+    if length < 2 or data[0] != 0xFF or data[1] != _JPEG_SOI:
+        raise ValueError("not a JPEG: no SOI marker at offset 0")
+    out: List[str] = []
+    off = 0
+    while off < length:
+        if data[off] != 0xFF:
+            out.append(
+                f"{length - off} bytes from offset {off} that no marker "
+                f"segment accounts for (expected a marker, found "
+                f"0x{data[off]:02X})"
+            )
+            return out
+        # A run of 0xFF before a marker is legal fill and belongs to the
+        # segment that follows it, so the segment starts at the run.
+        cursor = off
+        while cursor < length and data[cursor] == 0xFF:
+            cursor += 1
+        if cursor >= length:
+            out.append(f"{length - off} bytes of marker padding at offset {off} "
+                       f"with no marker after them")
+            return out
+        marker = data[cursor]
+        if marker == 0x00:
+            out.append(
+                f"{length - off} bytes from offset {off} that no marker "
+                f"segment accounts for (a stuffed 0xFF00 outside a scan)"
+            )
+            return out
+        name = _jpeg_name(marker)
+
+        if marker in _JPEG_STANDALONE:
+            off = cursor + 1
+            if marker == _JPEG_EOI:
+                if off < length:
+                    out.append(
+                        f"{length - off} bytes after the first top-level EOI "
+                        f"at offset {off}; this is where a motion photo's "
+                        f"appended video and a Samsung SEF block live"
+                    )
+                return out
+            continue
+
+        if cursor + 3 > length:
+            out.append(f"{length - off} bytes from offset {off}: {name} has a "
+                       f"truncated length field")
+            return out
+        declared = int.from_bytes(data[cursor + 1:cursor + 3], "big")
+        if declared < 2:
+            out.append(
+                f"{length - off} bytes from offset {off}: {name} declares a "
+                f"length of {declared}, below the two bytes the length field "
+                f"itself occupies"
+            )
+            return out
+        end = cursor + 1 + declared
+        if end > length:
+            out.append(
+                f"{name} at offset {off} declares {declared} bytes, which runs "
+                f"past the end of the file"
+            )
+            return out
+        off = end
+
+        if marker == _JPEG_SOS:
+            # Progressive JPEGs carry many SOS segments, so this is inside the
+            # loop and not a one-shot after the header.
+            scan_end = _jpeg_scan_end(data, off)
+            if scan_end is None:
+                out.append(
+                    f"{length - off} bytes of entropy-coded data from offset "
+                    f"{off} run to the end of the file with no closing marker"
+                )
+                return out
+            off = scan_end
+
+    raise ValueError("no EOI marker: this JPEG is truncated")
+
+
+# ------------------------------------------------------- ISO base media
+
+# `.mp4`, `.mov`, `.m4v`, `.heic`, `.heif`, `.avif` and `.3gp` are all the same
+# container: a tree of boxes, each `<4-byte size><4-byte type>`, that must tile
+# the range it sits in with nothing left over. Every byte belongs to a box or
+# it belongs to nothing, and belonging to nothing is what this reports.
+#
+# TWO THINGS THIS WALKER DOES NOT DO, both deliberately.
+#
+# It does not require an `ftyp` box, and it must not. Measured on a real iPhone
+# 14 Pro Live Photo `.mov`: the top level is `wide`, `mdat`, `moov` and a byte
+# search for the literal `ftyp` across the whole file returns nothing. That is
+# device output, not corruption, and refusing it would turn a correct file into
+# an UNVERIFIED one.
+#
+# An unknown box is a LEAF, never a guess. `_ISO_CONTAINERS` is the complete
+# list of boxes this will descend into; everything else accounts for its own
+# payload and is not opened. Descending into a box whose layout is unknown is
+# how a walker invents children and then reports the nonsense as unaccounted.
+# `udta` is the measured case for keeping that rule: a QuickTime `udta` holds
+# atoms whose type begins with 0xA9 (`(c)xyz`, the ISO 6709 GPS atom on real
+# Android output), which is not printable ASCII, and it may end with a four
+# byte zero terminator that is not a box header. Opening it buys nothing here,
+# because a surviving metadata atom is the residual scan's question and not
+# this module's, and it costs a false positive on every geotagged Android MP4.
+
+_ISO_HEADER = 8
+_ISO_LARGE_HEADER = 16
+_ISO_UUID_LEN = 16
+_ISO_MAX_DEPTH = 32
+
+# Value is the number of fixed payload bytes before the first child:
+#   0  children start at the first payload byte
+#   4  FullBox: a version byte and three flag bytes
+#   8  FullBox then a 32-bit entry count
+# `meta` is absent on purpose; its skip is sniffed. See _iso_meta_skip.
+_ISO_CONTAINERS: Dict[bytes, int] = {
+    b"moov": 0, b"trak": 0, b"edts": 0, b"mdia": 0, b"minf": 0, b"dinf": 0,
+    b"stbl": 0, b"mvex": 0, b"moof": 0, b"traf": 0, b"mfra": 0, b"tapt": 0,
+    b"sinf": 0, b"schi": 0, b"rinf": 0, b"strk": 0, b"strd": 0, b"cinf": 0,
+    b"paen": 0, b"fiin": 0, b"segr": 0, b"gitn": 0, b"clip": 0, b"matt": 0,
+    b"mdra": 0, b"iprp": 0, b"ipco": 0, b"grpl": 0,
+    b"iref": 4,
+    b"stsd": 8, b"dref": 8,
+}
+
+# Never descended into even if one of these ever reaches _ISO_CONTAINERS. Each
+# is padding, opaque payload, or a table of records rather than of boxes.
+_ISO_OPAQUE = frozenset({
+    b"free", b"skip", b"mdat", b"udta", b"uuid", b"ilst", b"ipma", b"iloc",
+    b"iinf", b"pitm", b"idat", b"wide", b"ftyp", b"keys", b"hdlr",
+})
+
+_ISO_META = b"meta"
+
+
+def _iso_printable(kind: bytes) -> bool:
+    return len(kind) == 4 and all(32 <= byte < 127 for byte in kind)
+
+
+def _iso_label(kind: bytes) -> str:
+    return kind.decode("latin1")
+
+
+def _iso_looks_like_box(data: bytes, offset: int, end: int) -> bool:
+    """
+    Do the eight bytes at `offset` read as a plausible box header?
+
+    Used only by the `meta` sniff, and deliberately strict: a printable
+    four-character type, and a size that is at least a header and fits inside
+    the range. A version and flags word of `00 00 00 00` fails both halves,
+    which is the whole reason the sniff works.
+    """
+    if offset + _ISO_HEADER > end:
+        return False
+    if not _iso_printable(bytes(data[offset + 4:offset + 8])):
+        return False
+    size = int.from_bytes(data[offset:offset + 4], "big")
+    return _ISO_HEADER <= size <= (end - offset)
+
+
+def _iso_meta_skip(data: bytes, payload_start: int, payload_end: int) -> Optional[int]:
+    """
+    Bytes of `meta` payload before its first child: 0, 4, or None for a leaf.
+
+    CLAUDE.md trap 8. `meta` has TWO header shapes and both occur in ONE FILE.
+    ISO/IEC 14496-12 defines MetaBox as a FullBox, so `moov/udta/meta` carries
+    a version and flags word before its children. Apple's QuickTime Keys
+    `moov/meta` is the same four characters and is NOT a FullBox. A walker that
+    assumes either shape misparses the other; the prior instrument read the
+    Apple shape as a child box of size 1751411826, which is the ASCII of
+    "hdlr" read as a length.
+
+    So the bytes are sniffed and the name is not trusted. When neither reading
+    produces a plausible box, this returns None and the box is treated as a
+    leaf that accounts for its own payload, rather than descended into on a
+    guess and then reported as unaccounted.
+    """
+    if _iso_looks_like_box(data, payload_start, payload_end):
+        return 0
+    if _iso_looks_like_box(data, payload_start + 4, payload_end):
+        return 4
+    return None
+
+
+def _iso_child_skip(data: bytes, kind: bytes, payload_start: int,
+                    payload_end: int) -> Optional[int]:
+    if kind in _ISO_OPAQUE:
+        return None
+    if kind == _ISO_META:
+        return _iso_meta_skip(data, payload_start, payload_end)
+    return _ISO_CONTAINERS.get(kind)
+
+
+def _iso_level(data: bytes, start: int, end: int, parent: str, depth: int,
+               out: List[str]) -> None:
+    """Tile [start, end) with boxes, appending a description of anything left."""
+    if depth > _ISO_MAX_DEPTH:
+        out.append(
+            f"box nesting deeper than {_ISO_MAX_DEPTH} levels at offset "
+            f"{start}; refusing to walk further"
+        )
+        return
+    off = start
+    while off < end:
+        left = end - off
+        if left < _ISO_HEADER:
+            # Fewer than eight bytes cannot be a box header. A QuickTime
+            # terminator is four zero bytes and other producers pad the same
+            # way, so an all-zero remainder is padding and anything else is a
+            # region no box accounts for.
+            if any(data[off:end]):
+                out.append(_iso_leftover(left, off, parent, depth))
+            return
+        kind = bytes(data[off + 4:off + 8])
+        if not _iso_printable(kind):
+            out.append(_iso_leftover(left, off, parent, depth))
+            return
+        size = int.from_bytes(data[off:off + 4], "big")
+        header = _ISO_HEADER
+        if size == 1:
+            if left < _ISO_LARGE_HEADER:
+                out.append(
+                    f"box '{_iso_label(kind)}' at offset {off} declares a "
+                    f"64-bit size but there is no room for it"
+                )
+                return
+            size = int.from_bytes(data[off + 8:off + 16], "big")
+            header = _ISO_LARGE_HEADER
+        elif size == 0:
+            # Legal only for the last box at a level: it runs to the end.
+            size = left
+        if kind == b"uuid":
+            header += _ISO_UUID_LEN
+        if size < header:
+            out.append(
+                f"box '{_iso_label(kind)}' at offset {off} declares {size} "
+                f"bytes, smaller than its own {header}-byte header"
+            )
+            return
+        if off + size > end:
+            out.append(
+                f"box '{_iso_label(kind)}' at offset {off} declares {size} "
+                f"bytes, which runs past the end of {parent}"
+            )
+            return
+
+        payload_start = off + header
+        payload_end = off + size
+        skip = _iso_child_skip(data, kind, payload_start, payload_end)
+        if skip is not None and payload_end - payload_start >= skip + _ISO_HEADER:
+            _iso_level(data, payload_start + skip, payload_end,
+                       f"box '{_iso_label(kind)}'", depth + 1, out)
+        off += size
+
+
+def _iso_leftover(count: int, offset: int, parent: str, depth: int) -> str:
+    if depth == 0:
+        return (f"{count} bytes at offset {offset} after the last top-level "
+                f"box, which no box accounts for")
+    return (f"{count} bytes at offset {offset} inside {parent} that no box "
+            f"accounts for")
+
+
+def _walk_isobmff(data: bytes) -> List[str]:
+    if len(data) < _ISO_HEADER:
+        raise ValueError(
+            f"not an ISO base media file: {len(data)} bytes is too short to "
+            f"hold one box"
+        )
+    if not _iso_looks_like_box(data, 0, len(data)):
+        raise ValueError(
+            "not an ISO base media file: the bytes at offset 0 do not read as "
+            "a box header, whatever the extension says"
+        )
+    out: List[str] = []
+    _iso_level(data, 0, len(data), "the file", 0, out)
+    return out
+
+
 # ---------------------------------------------------------------- dispatch
 
 _WALKERS: Dict[str, Callable[[bytes], List[str]]] = {
     ".png": _walk_png,
     ".webp": _walk_webp,
     ".gif": _walk_gif,
+    ".jpg": _walk_jpeg,
+    ".jpeg": _walk_jpeg,
+    ".jpe": _walk_jpeg,
+    ".mp4": _walk_isobmff,
+    ".mov": _walk_isobmff,
+    ".m4v": _walk_isobmff,
+    ".heic": _walk_isobmff,
+    ".heif": _walk_isobmff,
+    ".avif": _walk_isobmff,
+    ".3gp": _walk_isobmff,
 }
 
 

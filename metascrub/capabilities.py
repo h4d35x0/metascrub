@@ -101,7 +101,7 @@ _IMAGE: Dict[str, FormatSpec] = {
     ".tif": _exif("IFD0 cannot be dropped wholesale; identity tags swept individually"),
     ".tiff": _exif("IFD0 cannot be dropped wholesale; identity tags swept individually"),
     ".png": _exif("also drops iTXt/tEXt/zTXt text chunks"),
-    ".heic": _exif(), ".heif": _exif(), ".avif": _exif(),
+    # .heic/.heif/.avif: see the ISO base media block below.
     ".webp": _exif("EXIF, XMP and ICC chunks"),
     ".gif": _exif("comment blocks, XMP and application extension blocks"),
     ".jp2": _exif(), ".psd": _exif(),
@@ -411,8 +411,149 @@ DEFERRED.update({
 # End SVG block.
 # ---------------------------------------------------------------------------
 
+
+# ---------------------------------------------------------------------------
+# TIER 7: still images in an ISO base media container. Begin ISOBMFF block.
+#
+# .heic, .heif and .avif routed away from exiftool on 2026-09-07. This is a
+# change to shipped behaviour for a whole format family, so the measurement is
+# recorded here rather than in a commit message.
+#
+# THE DEFECT THAT FORCED IT. exiftool CANNOT remove a HEIF ICC profile. In HEIF
+# the ICC lives in iprp/ipco/colr, which is an item PROPERTY and not a metadata
+# item, and exiftool does not rewrite the property structure. Measured
+# 2026-09-07 with exiftool 13.29 through the full MetadataScrubber pipeline, on
+# real iPhone HEICs from <device-corpus>:
+#
+#   IMG_1034.heic (iPhone 8), Issue 263 dotnet.heic (iPhone XR) and
+#   exif-at-eof.heic (iPhone 11 Pro) each came back status=error,
+#   verdict=residual_found, with the Apple Display P3 strings 'Copyright Apple
+#   Inc., 2017' and 'Display P3' still in the output bytes, and 26 ICC_Profile
+#   tags still readable, including DeviceManufacturer, DeviceModel,
+#   ProfileDateTime and ProfileID. The three files reported 53 surviving tags
+#   each. Asked explicitly, `exiftool -icc_profile:all=` answers "1 image files
+#   unchanged".
+#
+# With Engine.ISOBMFF the same three files come back status=sanitized,
+# verdict=verified_clean, 27 surviving tags each, byte length unchanged to the
+# byte, and the picture item payloads byte-identical.
+#
+# WHY COMPLETE, AND WHY IT WAS PARTIAL FOR A DAY. These rows shipped PARTIAL
+# for exactly one measured reason, and that reason is now closed. The history is
+# kept rather than deleted, because the mechanism is the lesson.
+#
+#   THE CARRIER. MEASURED 2026-09-07 on Issue 487.heic, a real Galaxy S10+
+#   HEIC: a top-level `sefd` box, Samsung Extended Format Data, 106 bytes,
+#   holding the ASCII keys `Image_UTC_Data` with a unix-millisecond capture
+#   time and `MCC_Data` with a mobile country code. exiftool renders those as
+#   Samsung:TimeStamp, a wall clock time carrying the phone's local UTC offset,
+#   and Samsung:MCCData, a country. The shipping exiftool engine removed the
+#   box; the first cut of the ISOBMFF engine did not, so routing the family
+#   here traded a hard failure on every Apple HEIC for a SILENT leak on Samsung
+#   ones.
+#
+#   WHY NOTHING CAUGHT IT, which is trap 10 again and is the part worth
+#   remembering. `sefd` stores the time as a digit string and the country as
+#   'MCC_Data466'. exiftool RENDERS them as a formatted date and as a country
+#   name plus a number, so the needle verify.meaningful_values() would build is
+#   a string that is not in the file, the formatted date is dropped by the
+#   all-digits rule before it is even a needle, and the integer never survives
+#   verify._flatten at all. Total needles for that file: 3. So the run reported
+#   status=sanitized, verdict=verified_clean, and the file was still leaking.
+#   A verified_clean verdict is not evidence that a vendor carrier is gone.
+#
+#   THE FIX. isobmff_engine.REMOVED_TYPES now free-fills `sefd` like any other
+#   metadata box, length-preserving. MEASURED 2026-09-07 on that same file:
+#   output length 1622642 bytes, unchanged to the byte; the literals `sefd`,
+#   `Image_UTC_Data`, `MCC_Data`, `SEFH` and `SEFT` all absent from the output
+#   bytes; exiftool reports no Samsung group and no MakerNotes group at all;
+#   ffmpeg decodes one frame whose framemd5 is identical to the original's.
+#
+# THE EVIDENCE FOR COMPLETE, which is a measured diff and not a feeling. Every
+# still in the real-device corpus was run through the FULL pipeline twice on
+# 2026-09-07 with exiftool 13.29, once routed to Engine.EXIFTOOL and once to
+# Engine.ISOBMFF, and the surviving tag sets were compared. Counts below are
+# `exiftool -G1 -a -s -j -n` tags with the ExifTool, System and File groups
+# dropped, so they are NOT comparable to the 53/27 figures quoted further up,
+# which were counted a different way:
+#
+#   file                   original  exiftool routing   isobmff routing
+#   IMG_1034.heic               168  81, residual_found  29, verified_clean
+#   Issue 263 dotnet.heic       151  55, residual_found  29, verified_clean
+#   exif-at-eof.heic            146  55, residual_found  29, verified_clean
+#   Issue 487.heic               79  28, verified_clean  28, verified_clean
+#   Issue 649.avif              363  19, verified_clean  19, verified_clean
+#
+#   Tags surviving the ISOBMFF routing that did NOT survive the exiftool
+#   routing, per file: 0, 0, 0, 0, 0. The regression set is EMPTY on every
+#   file. In the other direction the ISOBMFF routing removes 52, 26, 26, 0 and
+#   0 tags that exiftool left behind, all of them the ICC profile.
+#
+#   Every tag that does survive is codec configuration, brand, image geometry
+#   or a byte offset: MajorBrand, CompatibleBrands, HandlerType, the HEVC or
+#   AV1 configuration record, ImageSpatialExtent, Rotation, ImagePixelDepth,
+#   MediaDataOffset, MediaDataSize, PrimaryItemReference. No provenance, no
+#   identity, no time, no place.
+#
+# WHY NOT KEEP PARTIAL ANYWAY. Because every other PARTIAL row in this table
+# names a carrier that was MEASURED to survive: maker notes in the raw
+# formats, SttbfAssoc and SttbSavedBy in OLE2, EXIF inside a base64 raster in
+# SVG. After the fix this family names none. A PARTIAL that means "we are
+# nervous" rather than "this specific thing survives" drains the word, and it
+# is not free: scrubber.py downgrades a COMPLETE format to STATUS_ERROR when
+# verification is not clean, so PARTIAL forfeits the one AUTOMATIC guard that
+# would catch the next leak the residual scan CAN see. Given the engine that
+# just shipped a silent leak, forfeiting an automatic guard is the wrong trade.
+#
+# THE COST OF SAYING COMPLETE, stated rather than glossed:
+#   1. scrubber.py:662 now turns any non-clean verification on a .heic, .heif
+#      or .avif into status=error. That is more hard failures, not fewer, and
+#      it is deliberate: this project prefers a refusal to a quiet partial.
+#   2. tests/test_removal.py:59 stops skipping test_complete_formats_verify_
+#      clean for these formats. MEASURED 2026-09-07: .heic, .heif and .avif are
+#      not in conftest.ALL_KINDS, so that test does not enumerate them today
+#      and the change is inert until somebody adds one. tests/test_heic_routing
+#      .py makes the equivalent assertion unconditionally on real device files
+#      so nothing depends on that.
+#   3. tests/test_gps_verify.py requires a COMPLETE format to be GPS-covered or
+#      to stay visible in the uncovered list. MEASURED: .heic, .heif and .avif
+#      are all in gps_verify.supported_extensions(), so they are covered.
+#
+# WHAT COMPLETE DOES NOT CLAIM. It claims no KNOWN carrier is left behind, in
+# the sense Completeness defines. It does not claim the engine has an opinion
+# about a vendor box no corpus file carries: `sefd` was found by inventory, not
+# by the residual scan, and the general blindness that hid it is unchanged.
+# What is new is that isobmff_engine.DECIDED_TYPES names every box type met at
+# the top level or under `moov`, and the inventory tests FAIL on an unlisted
+# one, so the next vendor box becomes a red test on the day a file carrying it
+# enters the corpus rather than a leak nobody notices. MEASURED 2026-09-07
+# across the whole corpus and every synthetic fixture, the only undecided types
+# were `sefd` and `wide`; both are now decided. Also unclaimed and unchanged:
+# the coded bitstream of a still-image ITEM, where an SEI user-data NAL would
+# be out of reach. MEASURED 2026-09-07: zero SEI user-data NALs in the image
+# items of all five corpus stills, so that gap has no instance here.
+#
+# Container.RAW is correct: HEIF stores metadata items uncompressed, and the
+# residual scan found the ICC strings in the raw bytes, which is how the defect
+# was measured in the first place. rewrites_container is True because the engine
+# writes a temporary file and atomically replaces the original, even though the
+# output is the same length.
+_ISOBMFF_NOTE = (
+    "ISO base media box surgery: EXIF, XMP and other non-image items, the ICC "
+    "profile in iprp/ipco/colr, item and movie metadata boxes, vendor boxes "
+    "including the Samsung `sefd` box, handler names and header timestamps are "
+    "removed in place, and the file length and the coded picture are unchanged"
+)
+_ISOBMFF: Dict[str, FormatSpec] = {
+    ext: FormatSpec(Engine.ISOBMFF, Completeness.COMPLETE, Container.RAW, True,
+                    _ISOBMFF_NOTE)
+    for ext in (".heic", ".heif", ".avif")
+}
+# End ISOBMFF block.
+# ---------------------------------------------------------------------------
+
 CAPABILITIES: Dict[str, FormatSpec] = {}
-for _table in (_IMAGE, _PDF, _OOXML, _ODF, _OLE2, _AV, _SVG):
+for _table in (_IMAGE, _PDF, _OOXML, _ODF, _OLE2, _AV, _SVG, _ISOBMFF):
     CAPABILITIES.update(_table)
 
 

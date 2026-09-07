@@ -65,9 +65,12 @@ No test here asserts anything about a video bitstream that is not H.264 or
 H.265. An AV1 or VP9 track carries the same class of value in structures this
 engine does not parse, and nothing in this file would notice one.
 
-No test here runs the file through `MetadataScrubber`. The engine is not wired
-into CAPABILITIES and `test_the_capabilities_rows_are_unchanged` asserts it
-stays that way, so there is no scrubber path to exercise yet.
+No test here runs the file through `MetadataScrubber`. That was because the
+engine was not wired into CAPABILITIES at all; since 2026-09-07 the .heic,
+.heif and .avif rows route here, and the end-to-end pipeline tests for those
+three live in tests/test_heic_routing.py rather than being bolted onto this
+file. Everything below still drives the engine directly, which is what keeps
+these assertions about the ENGINE and not about the routing.
 """
 
 from __future__ import annotations
@@ -1372,24 +1375,168 @@ def test_the_engine_is_available_and_needs_nothing_installed():
     assert not IsobmffEngine().supports_selective
 
 
-def test_the_capabilities_rows_are_unchanged():
+def test_only_the_still_image_rows_are_routed_to_this_engine():
     """
-    This engine is NOT wired in, and that is asserted rather than assumed.
+    WHICH rows this engine is wired into, asserted rather than assumed.
 
-    Flipping .mp4, .mov and .heic away from the engines that shipped is a
-    separate decision with its own evidence. An accidental flip would change
-    what every user of this tool runs, silently.
+    It used to assert that NO row was wired in. On 2026-09-07 .heic, .heif and
+    .avif were routed here, because exiftool cannot remove a HEIF ICC profile:
+    it lives in iprp/ipco/colr, an item PROPERTY rather than a metadata item,
+    and three real iPhone HEICs came back status=error with the Apple Display
+    P3 strings still in the output bytes. The evidence, the COMPLETE decision
+    and the end-to-end proof are in tests/test_heic_routing.py and in the
+    ISOBMFF block of capabilities.py.
+
+    The guard is still a guard, and it is the same one. Flipping .mp4 and .mov
+    away from the ffmpeg engine that shipped is a separate decision with its own
+    evidence, and an accidental flip of ANY other row would change what every
+    user of this tool runs, silently. So the routed set is pinned exactly rather
+    than merely being required to be non-empty.
     """
     assert CAPABILITIES[".mp4"].engine is Engine.AV
     assert CAPABILITIES[".mov"].engine is Engine.AV
-    assert CAPABILITIES[".heic"].engine is Engine.EXIFTOOL
-    assert CAPABILITIES[".heif"].engine is Engine.EXIFTOOL
-    assert CAPABILITIES[".avif"].engine is Engine.EXIFTOOL
     routed = sorted(ext for ext, row in CAPABILITIES.items()
                     if row.engine is Engine.ISOBMFF)
-    assert not routed, (
-        f"the isobmff engine is now routed for {routed}. That is a shipping "
-        "decision, not a refactor: see the note at the top of the engine.")
+    assert routed == [".avif", ".heic", ".heif"], (
+        f"the isobmff engine is now routed for {routed}. Adding or removing a "
+        "row there is a shipping decision, not a refactor: see the note at the "
+        "top of the engine and the ISOBMFF block in capabilities.py.")
+
+
+# ------------------------------------------------------- the box inventory
+#
+# THE DEFECT THIS EXISTS FOR, stated once so nobody has to guess later.
+#
+# On 2026-09-07 a real Galaxy S10+ HEIC was found to carry a top-level `sefd`
+# box, Samsung Extended Format Data, holding a capture wall-clock time and a
+# mobile country code. It survived a run that reported sanitized and
+# verified_clean, because no rule in this engine mentioned that box type and
+# nothing anywhere required one to. The file decoded, the structural
+# post-conditions held, and the residual scan could not see either value.
+#
+# The bug was therefore not a broken rule. It was the ABSENCE of an opinion,
+# which nothing can fail on. isobmff_engine.DECIDED_TYPES makes the absence
+# visible: every box type met at the top level or directly under `moov`, with
+# what happens to it. This test walks the fixtures with the INDEPENDENT parser
+# at the top of this file, not with isobmff.parse, and fails on a type the
+# table has never heard of. The real-device half of the sweep is in
+# tests/test_heic_routing.py.
+
+
+def surface_types(data):
+    """Every box type at the top level or directly under `moov`, per walk()."""
+    nodes = walk(data)
+    return {node.type for node in nodes
+            if node.depth == 0
+            or (node.depth == 1 and node.parent is not None
+                and node.parent.type == b"moov")}
+
+
+@pytest.mark.parametrize("kind", ALL_ISOBMFF)
+def test_every_box_type_in_the_fixtures_is_one_the_engine_has_decided(
+        kind, containers):
+    """
+    An undecided box type is the `sefd` defect one name over.
+
+    A failure here means somebody owes a decision, not that the engine is
+    broken: read what the box carries, then remove it, zero it, or record it in
+    DECIDED_TYPES as structural with the measurement written down. Adding the
+    name to the table to turn this green, with no look at the payload, is the
+    one response that reintroduces the bug it was written for.
+    """
+    if kind not in containers:
+        pytest.skip(f"no {kind} fixture on this machine")
+    undecided = sorted(
+        kind_bytes.decode("latin-1")
+        for kind_bytes in surface_types(read(containers[kind]))
+        if kind_bytes not in isobmff_engine.DECIDED_TYPES)
+    assert undecided == [], (
+        f"the {kind} fixture carries box types this engine has no opinion "
+        f"about: {undecided}")
+
+
+@pytest.mark.parametrize("kind", ALL_ISOBMFF)
+def test_the_output_carries_no_box_type_the_table_calls_removed(
+        kind, containers, tmp_path):
+    """
+    The table's `removed` rows, checked against the OUTPUT with the independent
+    parser rather than against the engine's own post-conditions.
+
+    _assert_clean already makes a version of this check, and says of itself
+    that it re-reads the output with the walker that wrote it, so it buys
+    fail-closed behaviour and not evidence. This is the same claim measured
+    with a different parser, which is what makes it evidence.
+    """
+    if kind not in containers:
+        pytest.skip(f"no {kind} fixture on this machine")
+    removed = {kind_bytes
+               for kind_bytes, decision in isobmff_engine.DECIDED_TYPES.items()
+               if decision == isobmff_engine.DECISION_REMOVED}
+    path = stage(containers, kind, tmp_path)
+    scrub(path)
+    survivors = sorted(
+        kind_bytes.decode("latin-1")
+        for kind_bytes in surface_types(read(path)) & removed)
+    assert survivors == [], f"{kind} output still carries {survivors}"
+
+
+def test_a_wide_box_carrying_a_payload_is_zeroed_like_a_free_box(
+        containers, tmp_path):
+    """
+    `wide` is QuickTime's reserved-space placeholder, and it was decided in the
+    same sweep that found `sefd`: a box type the engine had no opinion about.
+
+    Every `wide` in the corpus is header-only, so the rule is a no-op on real
+    files and asserting it there would assert nothing. This builds the case the
+    name and the content disagree about instead: the orphaned tag strings from
+    the `orphan_free` fixture, renamed to `wide`. Same construction as
+    test_mutation_leaving_free_box_contents_alone_is_caught, aimed at the type
+    that was undecided.
+
+    The rename keeps the payload and the length, so nothing moves, and the
+    sentinel is checked to be inside the renamed box BEFORE the scrub. A
+    fixture that lost its sentinel would make this pass while measuring
+    nothing.
+    """
+    path = stage(containers, "orphan_free", tmp_path)
+    value = sentinel("isoorphan").encode()
+
+    data = bytearray(read(path))
+    renamed = 0
+    for node in walk(bytes(data)):
+        if node.type != b"free":
+            continue
+        payload = bytes(data[node.payload_offset:
+                             node.payload_offset + node.payload_len])
+        if value in payload:
+            data[node.offset + 4:node.offset + 8] = b"wide"
+            renamed += 1
+    assert renamed == 1, (
+        f"expected exactly one free box holding the sentinel, found {renamed}")
+    with open(path, "wb") as handle:
+        handle.write(bytes(data))
+
+    before = read(path)
+    assert value in before, "the rename lost the sentinel"
+    assert any(node.type == b"wide" for node in walk(before)), (
+        "the rename did not produce a wide box")
+    length = len(before)
+
+    scrub(path)
+
+    after = read(path)
+    assert value not in after, (
+        "the orphaned tag strings survived inside a `wide` box. exiftool "
+        "reports nothing for that box, so the residual scan is never given a "
+        "needle for its contents and would call this file clean.")
+    assert len(after) == length, "zeroing a wide box changed the file length"
+    for node in walk(after):
+        if node.type == b"wide":
+            assert not any(
+                after[node.payload_offset:
+                      node.payload_offset + node.payload_len]), (
+                f"the wide box at offset {node.offset} still holds non-zero "
+                "bytes")
 
 
 # ---------------------------------------------------------------- mutation

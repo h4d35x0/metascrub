@@ -7,10 +7,15 @@ the removal table, 2.5 is the offset strategy, 3.2 is the structural assertion
 the tests make over the output. The container rules live next door in
 `metascrub/isobmff.py`; this file is only the policy.
 
-Deliberately NOT wired into CAPABILITIES. The .mp4, .mov and .heic rows still
-route to the av and exiftool engines. Flipping the default is a separate
-decision with its own evidence, and `tests/test_isobmff_engine.py` asserts the
-rows are unchanged so that flip cannot happen by accident.
+WIRED INTO CAPABILITIES FOR STILLS ONLY. The .heic, .heif and .avif rows route
+here; the .mp4, .mov and the rest of the AV family still route to the ffmpeg av
+engine. Flipping those is a separate decision with its own evidence, and
+`tests/test_isobmff_engine.py` asserts the AV rows are unchanged so that flip
+cannot happen by accident. The stills flip has its own evidence and its own
+file, `tests/test_heic_routing.py`: exiftool cannot remove a HEIF ICC profile,
+because in HEIF the ICC sits in iprp/ipco/colr as an item PROPERTY rather than
+as a metadata item, so the shipped exiftool routing left the Apple Display P3
+strings in the output bytes of every real iPhone HEIC and returned an error.
 
 THE STRATEGY, IN ONE SENTENCE
 
@@ -54,6 +59,16 @@ WHAT GETS REMOVED, AND WHY EACH ONE IS HERE
   meta, ilst   iTunes and QuickTime Keys tag dictionaries, but ONLY where
                `meta` is a dictionary. See the next section.
 
+  sefd         Samsung Extended Format Data, a top-level box on Galaxy stills.
+               Measured 2026-09-07 on a real Galaxy S10+ HEIC: 106 bytes
+               holding `Image_UTC_Data` with a unix-millisecond capture time
+               and `MCC_Data` with a mobile country code. exiftool renders them
+               as Samsung:TimeStamp, a wall clock time carrying the phone's
+               local UTC offset, and Samsung:MCCData, a country. The residual
+               scan cannot catch this one, which is trap 10 again: the date is
+               dropped by verify.py's all-digits rule and the country comes
+               back as an int, so neither ever becomes a needle.
+
   colr         where it carries an ICC profile ('prof' or 'rICC'). Section 2.4
                did not mention this box at all and it survives everything the
                original table described. Measured: 552 bytes of ICC on a real
@@ -87,9 +102,13 @@ WHAT GETS REMOVED, AND WHY EACH ONE IS HERE
                the whole XMP packet gone, decoded pixels bit identical, length
                unchanged to the byte.
 
-  free, skip   their CONTENTS are zeroed rather than the boxes being removed.
-               They can hold orphaned data from a previous edit, and they
-               cannot move without moving everything after them.
+  free, skip,  their CONTENTS are zeroed rather than the boxes being removed.
+  wide         They can hold orphaned data from a previous edit, and they
+               cannot move without moving everything after them. `wide` is
+               QuickTime's 8-byte reserved-space placeholder and is header-only
+               in every file measured here, so its zeroing is a no-op today and
+               is listed so a `wide` with a payload is handled rather than met
+               for the first time in the field.
 
   times        creation_time and modification_time in mvhd, tkhd and mdhd are
                zeroed, not removed: they are fixed-position fields inside a
@@ -138,6 +157,14 @@ WHAT THIS ENGINE DOES NOT REACH, STATED RATHER THAN IMPLIED
   - Item table tidiness. A zeroed Exif item stays DECLARED in `iinf`, pointing
     at zeros. exiftool's own `-all=` leaves exactly the same dangling
     declaration with length 0, so this matches the reference implementation.
+  - A vendor box type nobody has met. This engine does not refuse a box it has
+    no rule for, because most of them are structural and refusing would break
+    ordinary files. What it does instead is name every type it HAS met in
+    DECIDED_TYPES below, so an unlisted type at the top level or under `moov`
+    fails the inventory tests the moment a file carrying one enters the corpus.
+    That is a build failure and not a runtime refusal, which is a real limit
+    and is stated here rather than implied: a Galaxy box type that no corpus
+    file carries is still a box this engine will silently keep.
 """
 
 from __future__ import annotations
@@ -153,10 +180,27 @@ from .base import BaseEngine, EngineError, atomic_replace, temp_beside
 FREE = b"free"
 
 # Removed wherever they appear in the tree, as whole subtrees.
-REMOVED_TYPES = frozenset({b"udta", b"uuid", b"ilst"})
+#
+# `sefd` is Samsung Extended Format Data. It is a top-level box on Galaxy
+# stills and it is definitionally metadata: measured 2026-09-07 on a real
+# Galaxy S10+ HEIC, 106 bytes holding the ASCII keys `Image_UTC_Data` with a
+# unix-millisecond capture time and `MCC_Data` with a mobile country code,
+# which exiftool renders as Samsung:TimeStamp (a wall clock time carrying the
+# local UTC offset) and Samsung:MCCData (a country). The old exiftool routing
+# removed it and this engine did not, so routing .heic here without this entry
+# traded a hard failure on Apple files for a SILENT one on Samsung files.
+# See tests/test_heic_routing.py::test_the_samsung_sefd_box_is_removed.
+REMOVED_TYPES = frozenset({b"udta", b"uuid", b"ilst", b"sefd"})
 
 # Free-space boxes: kept in place, contents zeroed.
-FREE_SPACE_TYPES = frozenset({b"free", b"skip"})
+#
+# `wide` is QuickTime's reserved-space placeholder, the 8 bytes that let a
+# writer promote an `mdat` to a 64-bit header without moving anything. It is
+# padding by definition, so anything found in its payload is orphaned data of
+# exactly the kind the `free` rule exists for. Every `wide` measured here is
+# header-only and the zeroing is a no-op on it; it is listed so that a `wide`
+# with a payload is handled rather than met for the first time in the field.
+FREE_SPACE_TYPES = frozenset({b"free", b"skip", b"wide"})
 
 # HEIF/AVIF item types that ARE the picture. Everything else is a carrier and
 # its bytes are zeroed where `iloc` says they are.
@@ -184,6 +228,88 @@ KNOWN_METADATA_ITEM_TYPES = {
     b"Exif": "EXIF",
     b"mime": "XMP or another MIME-typed packet",
     b"uri ": "a URI-typed item",
+}
+
+
+# ------------------------------------------------------- the decided box types
+#
+# WHY THIS TABLE EXISTS
+#
+# `sefd` was not a bug in a removal rule. It was a box this engine had never
+# formed an opinion about, sitting at the TOP LEVEL of a mass-market phone's
+# stills, and nothing anywhere failed when it survived: the file decoded, the
+# structural post-conditions held, and the residual scan could not see either
+# value it carried (one is rendered by exiftool as a formatted date and dropped
+# by verify.py's all-digits rule, the other comes back as an int and never
+# becomes a needle at all). A silent pass is the failure mode this project
+# exists to prevent, so the gap itself has to be what fails, not the one name
+# that happened to be found.
+#
+# So: every box type met at the top level or directly under `moov`, across the
+# whole real-device corpus and every synthetic fixture, is listed here with the
+# decision it carries. A type that is NOT listed is not "probably harmless", it
+# is UNDECIDED, and the inventory tests fail on it. That converts the next
+# vendor box from a leak nobody notices into a red test on the day a file
+# carrying it is first added to the corpus.
+#
+# This table is documentation plus a test oracle. It does not drive removal:
+# REMOVED_TYPES and FREE_SPACE_TYPES above do that, and duplicating the policy
+# into a second structure would let the two disagree. The inventory test
+# asserts they agree.
+DECISION_STRUCTURAL = "structural"      # kept whole; the file is this box
+DECISION_REMOVED = "removed"            # free-filled as a whole subtree
+DECISION_ZEROED = "zeroed"              # box kept, payload zero-filled
+DECISION_FIELDS = "fields"              # box kept, named fields overwritten
+DECISION_DESCENDED = "descended"        # a container; its children are decided
+
+# MEASURED 2026-09-07: the union of every box type seen at the top level or
+# directly under `moov`, across the real-device corpus and all eleven synthetic
+# fixtures, is exactly:
+#
+#   free ftyp mdat meta mfra moof moov mvex mvhd sefd trak udta uuid wide
+#
+# The corpus holds nine files with an ISO base media extension. Eight of them
+# parse and are counted above; apple-livephoto-quicktime.mov is refused by
+# isobmff.parse because it carries no `ftyp` box at all, which is the
+# documented fail-closed behaviour, and a file this engine will not touch
+# cannot leak through it.
+#
+# Every one of those is in the first group below. The second group is boxes
+# this engine has NOT met at the surface here and has an opinion about from the
+# specification alone. That split is written down rather than glossed, because
+# an unmeasured name in a table is the same thing as an unmeasured name on an
+# allowlist: nobody checks it again. A second-group entry that later turns up
+# in a real file deserves a look at its payload before it is trusted.
+DECIDED_TYPES: dict = {
+    # ---- MEASURED at the surface in this corpus ----------------------------
+    b"ftyp": DECISION_STRUCTURAL,   # brand; deliberately preserved, see above
+    b"mdat": DECISION_STRUCTURAL,   # the picture and the samples themselves
+    b"moov": DECISION_DESCENDED,
+    b"trak": DECISION_DESCENDED,
+    b"mvex": DECISION_DESCENDED,    # fragment defaults
+    b"moof": DECISION_DESCENDED,    # fragment headers
+    b"mfra": DECISION_DESCENDED,    # random access tables
+    b"mvhd": DECISION_FIELDS,       # creation_time, modification_time zeroed
+    b"meta": DECISION_FIELDS,       # structural in HEIF/AVIF: items zeroed via
+                                    # iloc. A `meta` that is a tag dictionary is
+                                    # REMOVED instead, told apart by content in
+                                    # isobmff.item_metas, never by name.
+    b"udta": DECISION_REMOVED,
+    b"uuid": DECISION_REMOVED,
+    b"sefd": DECISION_REMOVED,
+    b"free": DECISION_ZEROED,
+    b"wide": DECISION_ZEROED,
+
+    # ---- decided from the specification, NOT met at the surface here -------
+    b"ilst": DECISION_REMOVED,      # met, but only under moov/meta
+    b"idat": DECISION_STRUCTURAL,   # met, but only under meta; item data,
+                                    # reached through iloc rather than directly
+    b"skip": DECISION_ZEROED,       # `free` under its other registered name
+    b"styp": DECISION_STRUCTURAL,   # segment type of a fragmented stream
+    b"sidx": DECISION_STRUCTURAL,   # segment index: byte ranges and durations
+    b"ssix": DECISION_STRUCTURAL,   # sub-segment index, same
+    b"pdin": DECISION_STRUCTURAL,   # progressive download rate hints
+    b"iods": DECISION_STRUCTURAL,   # MPEG-4 initial object descriptor
 }
 
 
