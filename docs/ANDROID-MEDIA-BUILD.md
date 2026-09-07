@@ -480,12 +480,32 @@ interrogated by exiftool, which reports what a mature, independent,
 **Two corrections, measured 2026-09-06, and the first one limits what this
 oracle is worth.**
 
-**The oracle is blind to the carrier this document calls highest-severity.**
-A JPEG stripped to the 2.1 keep-list but with the motion photo trailer
-deliberately retained reports **zero tags and zero warnings** to exiftool,
-while carrying a complete MP4 and its sentinel. The same silence holds for a
-WebP with an MP4 past its declared RIFF size. PNG is the only one of the
-three where exiftool notices anything.
+**The oracle is blind to the CONTENTS of the carrier this document calls
+highest-severity.** A JPEG stripped to the 2.1 keep-list but with the motion
+photo trailer deliberately retained still carries a complete MP4 and its
+sentinel. The same holds for a WebP with an MP4 past its declared RIFF size.
+
+**Corrected 2026-09-06. An earlier version of this paragraph said exiftool
+reports "zero tags and zero warnings" on such a file. That is true of the
+Google flavour and false of the Samsung one.** Measured on both fixtures with
+the trailer deliberately retained:
+
+| Flavour | `ftyp` still present | What exiftool reports |
+|---|---|---|
+| Google | yes | nothing beyond the keep-list groups |
+| Samsung | yes | `EmbeddedVideoType`, `EmbeddedVideoFile`, `TimeStamp` |
+
+Samsung is visible because a SEF trailer is discovered backward from the last
+six bytes of the file and needs no APPn segment to point at it, so removing
+`APP1` does not orphan it.
+
+**The half that holds for both is the load-bearing half:** exiftool NAMES the
+blob and never says what is inside it. `EmbeddedVideoFile` reports
+`(Binary data 8054 bytes)`. The trailer video's own GPS therefore appears in no
+reported value, no needle can be made from it, and the oracle cannot tell a
+retained trailer from a removed one by content. That is why the gate is the
+structural assertion (zero bytes after the first top-level `EOI`) and the
+oracle is only the belt.
 
 So the oracle is necessary and not sufficient. **The gate is exiftool plus
 the structural assertions from 3.2, never exiftool alone.** An oracle that
