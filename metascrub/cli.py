@@ -97,6 +97,28 @@ def _print_result(result: Dict) -> None:
         for region in regions[:5]:
             print(_c(f"        {region[:70]}", RED))
 
+    # What the verdict does not cover.
+    #
+    # The verdict is one word about the checks that ran. This says which ones
+    # did not, because "verified clean" on a format with no GPS walker and no
+    # structural walker is a narrower claim than it reads as, and a user who
+    # cannot see the difference cannot act on it. Printed in full and never
+    # truncated: the whole value of the line is the specific sentence, such as
+    # the byte count of a trailer that was not interrogated.
+    #
+    # Yellow, and never a change to the exit code. This reports what was not
+    # measured; it is not a finding about the file.
+    coverage = verification.get("coverage") or {}
+    if coverage.get("gps_findings"):
+        # A GPS carrier the walker found in the OUTPUT. Red, because unlike the
+        # rest of this block it is a measurement of something that is there.
+        findings = coverage["gps_findings"]
+        print(_c(f"      GPS CARRIER STILL PRESENT: {len(findings)}", RED))
+        for finding in findings[:5]:
+            print(_c(f"        {finding[:70]}", RED))
+    if coverage and not coverage.get("every_check_ran", True):
+        print(_c(f"      NOT FULLY CHECKED: {coverage.get('detail', '')}", YELLOW))
+
     # Identifiers that are not in the file. Printed for every status, and
     # printed whether or not --neutral-names was passed, because a user who
     # does not know the filename leaks cannot choose to fix it. Yellow, not

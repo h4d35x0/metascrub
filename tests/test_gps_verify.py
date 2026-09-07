@@ -29,14 +29,16 @@ base media specification rather than from `gps_verify._isobmff_boxes`.
 
 WHAT IS DELIBERATELY NOT ASSERTED HERE
 
-That `verify.verify()` reports anything different. It does not, on purpose:
-this module is not wired in, `test_verify_does_not_import_this_module_yet`
-makes that a stated fact, and wiring it is a separate reviewed commit. That
-same test is what collects the deferral: the moment `verify.py` imports
-`gps_verify`, it fails, and the commit that wires the check in cannot land
-without coming back to this file and strengthening
-`test_an_uncovered_format_can_never_read_as_checked` into an assertion over
-`Verification`. Nothing here depends on anyone remembering that.
+That `verify.verify()` reports a different VERDICT. It does not, and that is
+Option B in docs/WHAT-THE-TOOL-CLAIMS.md working as designed: as of 2026-09-07
+`verify.py` imports this module and carries its answer in the additive
+`Verification.coverage` field, while `Verdict` is untouched. A file whose GPS
+check reported NOT_CHECKED still reads `verified_clean`, and now says so with
+its limits attached. Whether the verdict value itself should change is the
+still-open half of the old deferral;
+`test_an_uncovered_format_can_never_read_as_checked` writes out both halves and
+names the test that now collects the open one. The rest of the coverage wiring
+is measured in `tests/test_coverage_reporting.py`, not here.
 
 That a raw file's GPS is caught. No raw fixture exists on this machine, so no
 raw extension has a walker, and
@@ -54,6 +56,7 @@ import pytest
 
 from conftest import (
     HAVE_FFMPEG,
+    build,
     exiftool_or_fail,
     oracle_metadata,
     sentinel,
@@ -725,19 +728,35 @@ def test_gps_in_scope_reads_the_field_list(fields, expected):
 
 def test_an_uncovered_format_can_never_read_as_checked(tmp_path):
     """
-    Overcorrection test 8 and test 10 together, in the form they can take
-    before the check is wired in.
+    Overcorrection test 8 and test 10 together, now in the form the wiring
+    allows.
 
     Section 9 names the single biggest risk in this work: that GPS
     verification ships covering the easy containers while `verified clean` on a
     .mkv goes on meaning exactly what it meant before. Every mechanism that
     prevents it is asserted here.
 
-    WHEN THIS MODULE IS WIRED INTO verify.py, THIS TEST MUST GROW an assertion
-    that a COMPLETE format whose GPS check reported NOT_CHECKED cannot produce
-    a bare `verified clean` verdict. That obligation is collected by
-    test_verify_does_not_import_this_module_yet, which fails the moment the
-    wiring lands.
+    THE DEFERRAL THIS TEST CARRIED, IN TWO HALVES. The old wording was: when
+    gps_verify is wired into verify.py, assert that "a COMPLETE format whose
+    GPS check reported NOT_CHECKED cannot produce a BARE verified_clean". It
+    was collected by test_verify_does_not_import_this_module_yet, which was
+    deleted on 2026-09-07 when the wiring landed. That sentence admits two
+    readings and they are not the same size, so both are written down rather
+    than the convenient one being picked:
+
+      DISCHARGED HERE. "Not BARE": such a file must carry, in the same result,
+      a coverage statement naming the checks that did not run. That is Option B
+      in docs/WHAT-THE-TOOL-CLAIMS.md, it is what shipped, and the second half
+      of this test measures it end to end on a real .pdf scrub.
+
+      STILL OPEN, AND NOT DECIDED HERE. "Cannot produce verified_clean AT ALL":
+      the verdict VALUE itself would change. That is Option D, it is breaking
+      for every parser matching on `verdict`, and section 5 leaves the choice
+      to the owner. It is NOT closed by this commit and must not be read as
+      closed. Its collector is now
+      tests/test_coverage_reporting.py::test_the_zero_needle_decision_is_still_open
+      and the named constant `verify.ZERO_NEEDLE_DECISION_IS_OPEN`, which that
+      test asserts alongside the behaviour it would change.
     """
     path = write(str(tmp_path / "video.mkv"), b"\x1aE\xdf\xa3" + b"\x00" * 512)
     report = gps_verify.scan(path)
@@ -755,6 +774,33 @@ def test_an_uncovered_format_can_never_read_as_checked(tmp_path):
     with pytest.raises(TypeError):
         if report:                      # noqa: B015 - this is the thing being refused
             pass
+
+    # The half the wiring discharges, measured through the shipping tool rather
+    # than asserted about it. A .pdf is declared COMPLETE, has no GPS walker
+    # and no structural walker, so it is the sharpest available case: the tool
+    # says "verified clean" about a file on which two of its three checks never
+    # ran.
+    document, _sentinel = build(".pdf", tmp_path)
+    assert CAPABILITIES[".pdf"].completeness is Completeness.COMPLETE
+    assert ".pdf" not in gps_verify.supported_extensions()
+
+    with MetadataScrubber(backup=False) as scrubber:
+        result = scrubber.sanitize_file(document, remove_all=True)
+
+    verification = result["verification"]
+    coverage = verification["coverage"]
+    assert verification["verdict"] == "verified_clean", verification
+
+    # NOT bare. The claim now travels with its own limits attached.
+    assert coverage is not None, "verified_clean with no coverage statement"
+    assert coverage["gps_status"] == GpsStatus.NOT_CHECKED.value
+    assert coverage["gps_carriers_checked"] == []
+    assert coverage["every_check_ran"] is False
+    assert "gps_carriers" in coverage["unchecked"]
+    # Trap 6: the distinction is TEXT, so it survives into anything that
+    # renders it, including a terminal with no colour.
+    assert "NOT CHECKED" in coverage["detail"]
+    assert ".pdf" in coverage["detail"]
 
 
 def test_only_one_of_the_five_states_is_clean():
@@ -904,28 +950,35 @@ def test_coverage_reports_the_gap_at_runtime():
     )
 
 
-def test_verify_does_not_import_this_module_yet():
+def test_this_module_is_wired_into_verify():
     """
-    The unwired state, made deliberate and visible rather than forgotten.
+    The replacement for test_verify_does_not_import_this_module_yet, which was
+    deleted on 2026-09-07 in the commit that wired this module in. That test
+    existed to make the UNWIRED state a deliberate, visible fact; the state it
+    guarded no longer exists, and a test asserting it would now be asserting
+    the opposite of the design.
 
-    Phase 1 set this precedent with the PNG engine: build the module and its
-    tests, prove it, and leave the wiring as a separate reviewed commit. This
-    test is also the collector for the deferral recorded in
-    test_an_uncovered_format_can_never_read_as_checked: it fails the moment
-    verify.py imports this module, so the wiring commit cannot land without
-    reading this file.
+    This is its inverse, and it is not decoration: `verify.py` importing this
+    module is the whole of Option B in
+    docs/WHAT-THE-TOOL-CLAIMS.md. If someone unwires it, every coverage
+    assertion below still needs to fail loudly rather than quietly start
+    reporting NOT_CHECKED for every file on earth, which is exactly what a
+    missing import would look like.
+
+    THE HALF OF THE OLD DEFERRAL THAT IS DISCHARGED, AND THE HALF THAT IS NOT,
+    are both written out in test_an_uncovered_format_can_never_read_as_checked
+    below. Read that docstring before assuming this one closed anything.
     """
-    source_path = os.path.join(os.path.dirname(verify.__file__), "verify.py")
-    with open(source_path, "r", encoding="utf-8") as handle:
-        source = handle.read()
-    assert "gps_verify" not in source, (
-        "verify.py now references gps_verify. Wiring it in is a deliberate, "
-        "separately reviewed change: when you make it, strengthen "
-        "test_an_uncovered_format_can_never_read_as_checked to assert that a "
-        "COMPLETE format whose GPS check reported NOT_CHECKED cannot produce a "
-        "bare verified_clean, and then delete this test."
+    assert hasattr(verify, "gps_verify"), (
+        "verify.py no longer imports gps_verify. Without it every file reports "
+        "GPS NOT_CHECKED, which reads as a coverage gap rather than as a "
+        "missing wire."
     )
-    assert not hasattr(verify, "gps_verify")
+    assert verify.gps_verify is gps_verify
+
+    # And the wire carries something. An import nothing calls is not a wire.
+    coverage = verify.Coverage.__doc__ or ""
+    assert "gps_verify" in coverage
 
 
 def test_the_findings_and_limits_survive_serialisation(tmp_path):

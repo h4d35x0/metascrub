@@ -110,6 +110,36 @@ def _verdict_text(result: Dict) -> str:
     return "not verified"
 
 
+def _with_coverage(detail: str, result: Dict) -> str:
+    """
+    Append what the verdict does NOT cover to the Detail cell.
+
+    Per trap 6 this is TEXT and only text. The Verification cell says "verified
+    clean" on a format with no GPS walker and no structural walker exactly as
+    it does on one where both ran, so the difference between those two files
+    has to be readable somewhere, in words, by someone who cannot see colour at
+    all. This is that somewhere. A row whose every check ran gains nothing, so
+    the cell is unchanged for the ordinary case.
+
+    Never a claim about the file. "NOT FULLY CHECKED" says what was not
+    measured; whether the file leaks is the Verification cell's word.
+    """
+    coverage = (result.get("verification") or {}).get("coverage") or {}
+    if not coverage:
+        return detail
+    notes = []
+    if coverage.get("gps_findings"):
+        notes.append(
+            f"GPS CARRIER STILL PRESENT ({len(coverage['gps_findings'])})"
+        )
+    if not coverage.get("every_check_ran", True):
+        notes.append("NOT FULLY CHECKED: " + (coverage.get("detail") or ""))
+    if not notes:
+        return detail
+    joined = "  -  ".join(notes)
+    return f"{detail}  -  {joined}" if detail else joined
+
+
 class ScrubberWindow:
     """The whole application. One window, one worker at a time."""
 
@@ -616,6 +646,7 @@ class ScrubberWindow:
         if not detail and result.get("completeness") == Completeness.PARTIAL.value \
                 and status == STATUS_SANITIZED:
             detail = "PARTIAL: " + (result.get("engine_note") or "residue may remain")
+        detail = _with_coverage(detail, result)
 
         if self.tree.exists(path):
             self.tree.item(

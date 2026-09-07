@@ -22,6 +22,23 @@ matters:
      the file is not clean, whatever any tool reports.
 
 The residual scan is why this module reads the file before touching it.
+
+WHAT THE VERDICT DOES NOT SAY, AND WHERE THAT NOW GOES
+
+Both checks above are bounded, and the bounds used to be invisible. The
+residual scan can only search for values a baseline read produced, so a carrier
+exiftool never parsed contributes no needles; `structure.py` and
+`gps_verify.py` each answer a question that does not depend on the baseline,
+and each has an extension list shorter than the tool's own. Measured
+2026-09-07 and recorded in docs/WHAT-THE-TOOL-CLAIMS.md: of the 71 extensions
+in CAPABILITIES, 50 had neither walker, 29 of those are declared COMPLETE, and
+on all of them the output said `verified clean` with nothing hedging.
+
+So `Verification` carries a `coverage` field alongside the verdict, naming
+which checks ran and which did not, in the checks' own words. It changes no
+verdict. It is the channel: `gps_verify` computed a correct and specific
+sentence about an 18.4 MB trailer on a real Samsung JPEG, and until this field
+existed there was nowhere for that sentence to go.
 """
 
 from __future__ import annotations
@@ -34,7 +51,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional, Sequence, Set
 
+from . import gps_verify
 from .capabilities import Container, FormatSpec
+from .structure import StructureReport
 from .structure import scan as structure_scan
 
 # exiftool reports filesystem facts and derived values under these groups. They
@@ -181,6 +200,158 @@ class Verdict(str, Enum):
     STRUCTURE_UNACCOUNTED = "structure_unaccounted"
 
 
+# The checks this build knows how to run, named so that a caller can be told
+# WHICH question went unasked rather than only that one did. A check that ran
+# but could not reach the whole file is named here too: "we looked at most of
+# it" is not "we looked".
+CHECK_RESIDUAL_SCAN = "residual_scan"
+CHECK_GPS_CARRIERS = "gps_carriers"
+CHECK_STRUCTURE_REGIONS = "structure_regions"
+
+ALL_CHECKS = (CHECK_RESIDUAL_SCAN, CHECK_GPS_CARRIERS, CHECK_STRUCTURE_REGIONS)
+
+
+# ------------------------------------------------------- the zero-needle decision
+#
+# OPEN, ON PURPOSE. THIS IS THE PLACE IT LANDS WHEN IT IS DECIDED.
+#
+# `checked_values == 0` means the residual scan searched the output bytes for
+# no strings at all and then returned "nothing survived". Measured 2026-09-07
+# and recorded in docs/WHAT-THE-TOOL-CLAIMS.md section 2 Case B: on
+# `Nokia 6.1.mp4`, a real geotagged Android video, the verdict is
+# VERIFIED_CLEAN over an empty needle set, and the same shape reproduces on a
+# GPS-only JPEG and a GPS-only DNG. That is the one case where "measured" and
+# "inferred" are provably the same code path, which is the sentence the module
+# docstring above opens by rejecting.
+#
+# Section 5 of that document recommends the case must not be VERIFIED_CLEAN and
+# deliberately does NOT decide whether it becomes a NEW verdict value or a
+# downgrade to the existing UNVERIFIED. Both are breaking changes to the JSON
+# report, so the choice is the owner's and is NOT made here. The behaviour is
+# therefore unchanged by the coverage wiring below: `coverage` REPORTS the
+# number, and nothing reads it back as a verdict.
+#
+# WHAT CHANGES WHEN THE DECISION LANDS, so the cost is visible before it is
+# paid rather than discovered during it:
+#   1. `verify()` grows one branch, here in this module, on `not needles`.
+#   2. `Verdict` grows a value, or `UNVERIFIED` grows a second meaning. Only
+#      the first is greppable; the second is trap 2 in a new place, because
+#      UNVERIFIED today means "verification could not run" and this is
+#      "verification ran over an empty set".
+#   3. `gui._verdict_text()` needs the new word. It falls back to
+#      "not verified" for an unrecognised verdict, which fails safe but reads
+#      as the wrong thing.
+#   4. `scrubber.py`'s COMPLETE downgrade reads `not verification.clean` and
+#      would start turning genuinely cleaned files into STATUS_ERROR.
+#   5. Every test asserting VERIFIED_CLEAN on a fixture whose baseline yields
+#      no needles. Measured: 2 of the 13 files in the document's table.
+#   6. README.md, CHANGELOG.md (as BREAKING), and the Android app's renderer.
+#
+# `tests/test_coverage_reporting.py::test_the_zero_needle_decision_is_still_open`
+# is the collector: it asserts the flag and the current behaviour together, so
+# flipping the flag without doing 1 to 6 fails loudly instead of silently.
+ZERO_NEEDLE_DECISION_IS_OPEN = True
+
+
+@dataclass
+class Coverage:
+    """
+    What was actually checked on this file, and what was not.
+
+    This exists because "we did not look" had six spellings and none of them
+    reached the user: `GpsStatus.NOT_CHECKED`, `StructureReport.applicable`,
+    `ReadOutcome.UNPARSED`, `Completeness.PARTIAL`, `Verdict.UNVERIFIED` and an
+    unbuilt sixth. `gps_verify` computed a correct, specific sentence about an
+    18.4 MB trailer on a real Samsung JPEG and there was no channel for it to
+    travel down. This is the channel.
+
+    It carries a verdict about NOTHING. Every field is a statement about which
+    question was asked, never about whether the file is clean; that remains
+    `Verdict`, unchanged. A caller must not read `every_check_ran` as a pass.
+
+    `gps_status` is `gps_verify.GpsStatus`'s own value, verbatim, and
+    `structure_applicable` is `StructureReport.applicable`, verbatim. Neither
+    is translated into a new vocabulary: a seventh spelling of "we did not
+    look" is the defect this field exists to close, not a shape it should take.
+    """
+
+    checked_values: int = 0
+    gps_status: str = gps_verify.GpsStatus.NOT_CHECKED.value
+    gps_carriers_checked: List[str] = field(default_factory=list)
+    gps_findings: List[str] = field(default_factory=list)
+    gps_detail: str = ""
+    # Case D in docs/WHAT-THE-TOOL-CLAIMS.md. `unaccounted_regions: []` is
+    # emitted identically whether the structural walk RAN and found nothing or
+    # NEVER HAPPENED, so the two states share one representation in the
+    # interface people parse. That is trap 2, live, inside the JSON report.
+    # This is the key that separates them.
+    structure_applicable: bool = False
+    structure_detail: str = ""
+    # The checks that did not run, or that ran without reaching the whole file.
+    # Which of those two it was is in `gps_status` and `structure_detail`; this
+    # list is the summary, never the evidence.
+    #
+    # The DEFAULT is both of them, not the empty list. A default-constructed
+    # Coverage describes a file nothing was run against, and an empty
+    # `unchecked` there would make `every_check_ran` True about a file nobody
+    # looked at, which is the exact shape of the defect this class was added to
+    # end.
+    unchecked: List[str] = field(
+        default_factory=lambda: [CHECK_GPS_CARRIERS, CHECK_STRUCTURE_REGIONS]
+    )
+    detail: str = ""
+
+    def __post_init__(self) -> None:
+        # A Coverage whose summary disagrees with its own evidence is worse
+        # than no Coverage: it is a wrong answer in the field that exists to
+        # make wrong answers visible. Refused at construction, the way
+        # GpsReport refuses an applicable report that names no carriers.
+        gps_ran = self.gps_status in (gps_verify.GpsStatus.CLEAN.value,
+                                      gps_verify.GpsStatus.CARRIER_FOUND.value)
+        listed = CHECK_GPS_CARRIERS in self.unchecked
+        if gps_ran and listed:
+            raise ValueError(
+                f"gps_status is {self.gps_status!r}, which means the walker "
+                f"reached the whole file, but {CHECK_GPS_CARRIERS!r} is listed "
+                "as unchecked"
+            )
+        if not gps_ran and not listed:
+            raise ValueError(
+                f"gps_status is {self.gps_status!r}, which is not a completed "
+                f"walk, so {CHECK_GPS_CARRIERS!r} must be listed as unchecked"
+            )
+        if not self.structure_applicable and CHECK_STRUCTURE_REGIONS not in self.unchecked:
+            raise ValueError(
+                "structure_applicable is False, which means no structural "
+                f"walker ran, so {CHECK_STRUCTURE_REGIONS!r} must be listed as "
+                "unchecked"
+            )
+
+    @property
+    def every_check_ran(self) -> bool:
+        """
+        True only when every check this build knows ran over the whole file.
+
+        Never a claim that the file is clean. A file can have every check run
+        and still be leaking, and `Verdict` is what says so.
+        """
+        return not self.unchecked
+
+    def as_dict(self) -> Dict:
+        return {
+            "checked_values": self.checked_values,
+            "gps_status": self.gps_status,
+            "gps_carriers_checked": list(self.gps_carriers_checked),
+            "gps_findings": list(self.gps_findings),
+            "gps_detail": self.gps_detail,
+            "structure_applicable": self.structure_applicable,
+            "structure_detail": self.structure_detail,
+            "unchecked": list(self.unchecked),
+            "every_check_ran": self.every_check_ran,
+            "detail": self.detail,
+        }
+
+
 @dataclass
 class Verification:
     verdict: Verdict = Verdict.UNVERIFIED
@@ -189,12 +360,24 @@ class Verification:
     checked_values: int = 0
     detail: str = ""
     unaccounted_regions: List[str] = field(default_factory=list)
+    # None means no check was run for this file at all, which is what a
+    # Verification built by hand for an already-clean file honestly represents.
+    # It is emitted as JSON null rather than as a default Coverage, because a
+    # default Coverage would say `structure_applicable: false`, and that is the
+    # very conflation this field was added to end.
+    coverage: Optional[Coverage] = None
 
     @property
     def clean(self) -> bool:
         return self.verdict is Verdict.VERIFIED_CLEAN
 
     def as_dict(self) -> Dict:
+        # ADDITIVE ONLY. `--report FILE` is documented in README.md and people
+        # parse it, so every key below that existed before `coverage` keeps its
+        # name, its type and its meaning.
+        # tests/test_coverage_reporting.py::test_the_report_schema_is_additive
+        # asserts exactly that, key by key, against the shape measured before
+        # this change.
         return {
             "verdict": self.verdict.value,
             "clean": self.clean,
@@ -203,6 +386,7 @@ class Verification:
             "checked_values": self.checked_values,
             "detail": self.detail,
             "unaccounted_regions": self.unaccounted_regions,
+            "coverage": self.coverage.as_dict() if self.coverage else None,
         }
 
 
@@ -397,6 +581,93 @@ def scoped_values(metadata: Dict, fields: Sequence[str]) -> Set[str]:
     return meaningful_values(subset)
 
 
+def _gps_report(path: str, only_fields: Optional[Sequence[str]]):
+    """
+    Run the GPS carrier check on the OUTPUT, or say why it was not run.
+
+    Returns None when this run deliberately did not ask the question, which is
+    not the same as `gps_verify` having no walker for the format. A selective
+    removal of the Artist must not be failed for the GPS the user chose to
+    keep, so the check is scoped by `gps_verify.gps_in_scope()`, which exists
+    for that reason and mirrors `scoped_values()` above. The two "we did not
+    ask" cases produce the same `gps_status` (gps_verify's own NOT_CHECKED,
+    which is the honest word for both) and different `gps_detail`, because the
+    caller needs to know which one it was.
+    """
+    if not gps_verify.gps_in_scope(only_fields):
+        return None
+    return gps_verify.scan(path)
+
+
+def _coverage(path: str, needles: int, report, structure: StructureReport,
+              only_fields: Optional[Sequence[str]]) -> Coverage:
+    """
+    Assemble the one statement of what was and was not checked.
+
+    Nothing here decides anything. It reports what the three checks said, in
+    their own words, and names the ones that did not run.
+    """
+    extension = os.path.splitext(path)[1].lower() or "this format"
+    unchecked: List[str] = []
+
+    if report is None:
+        gps_status = gps_verify.GpsStatus.NOT_CHECKED.value
+        carriers: List[str] = []
+        findings: List[str] = []
+        targeted = ", ".join(str(name) for name in (only_fields or []))
+        gps_detail = (
+            "GPS carriers: NOT CHECKED (this run was asked to remove only "
+            f"{targeted or 'named fields'}, none of which is a GPS field, so "
+            "a surviving coordinate is the requested behaviour and not a leak)"
+        )
+    else:
+        gps_status = report.status.value
+        carriers = list(report.carriers_checked)
+        findings = [str(item) for item in report.findings]
+        gps_detail = report.describe()
+
+    # CLEAN and CARRIER_FOUND are the two states in which the walker reached
+    # the whole file. NOT_CHECKED, ERROR and INCOMPLETE are not, and folding
+    # any of them into "checked" is the over-claim gps_verify was built to
+    # refuse.
+    if gps_status not in (gps_verify.GpsStatus.CLEAN.value,
+                          gps_verify.GpsStatus.CARRIER_FOUND.value):
+        unchecked.append(CHECK_GPS_CARRIERS)
+
+    if not structure.applicable:
+        structure_detail = (
+            f"structure: NOT CHECKED (no structural walker for {extension})"
+        )
+        unchecked.append(CHECK_STRUCTURE_REGIONS)
+    elif structure.error is not None:
+        structure_detail = f"structure: COULD NOT CHECK ({structure.error})"
+        unchecked.append(CHECK_STRUCTURE_REGIONS)
+    elif structure.unaccounted:
+        structure_detail = (
+            f"structure: {len(structure.unaccounted)} region(s) of the output "
+            "are not accounted for"
+        )
+    else:
+        structure_detail = "structure: every region of the output is accounted for"
+
+    # The residual scan always runs. It can still search for nothing; see
+    # ZERO_NEEDLE_DECISION_IS_OPEN above for why that is reported as a number
+    # here and not as a verdict anywhere.
+    residual_detail = f"residual byte scan: {needles} value(s) searched for"
+
+    return Coverage(
+        checked_values=needles,
+        gps_status=gps_status,
+        gps_carriers_checked=carriers,
+        gps_findings=findings,
+        gps_detail=gps_detail,
+        structure_applicable=structure.applicable,
+        structure_detail=structure_detail,
+        unchecked=unchecked,
+        detail="; ".join([residual_detail, gps_detail, structure_detail]),
+    )
+
+
 def verify(
     path: str,
     spec: FormatSpec,
@@ -432,6 +703,19 @@ def verify(
         and key != "SourceFile"
     )
 
+    # Both of these run before any verdict is returned, and unconditionally.
+    #
+    # The structural scan used to run only on the path where nothing survived,
+    # which meant a RESIDUAL_FOUND file emitted `unaccounted_regions: []` and
+    # `structure_applicable` would have had to say False about a walk that was
+    # never attempted. That is the same conflation this field was added to
+    # close, one branch further along, so the walk is attempted for every file
+    # and `structure_applicable` is a measurement on every path. The branch
+    # ORDER below is unchanged: the residual scan is still decisive.
+    gps = _gps_report(path, only_fields)
+    structure = structure_scan(path)
+    coverage = _coverage(path, len(needles), gps, structure, only_fields)
+
     if survivors:
         return Verification(
             verdict=Verdict.RESIDUAL_FOUND,
@@ -439,6 +723,7 @@ def verify(
             remaining_tags=remaining,
             checked_values=len(needles),
             detail=f"{len(survivors)} metadata value(s) still present in the output bytes",
+            coverage=coverage,
         )
 
     # The residual scan can only look for values a baseline read produced, so a
@@ -448,13 +733,13 @@ def verify(
     # data appended after a GIF trailer each rode through a SANITIZED file that
     # reported "verified clean". This check asks the question that does not
     # depend on the baseline read: is there a region the format cannot explain?
-    structure = structure_scan(path)
     if structure.error:
         return Verification(
             verdict=Verdict.UNVERIFIED,
             checked_values=len(needles),
             remaining_tags=remaining,
             detail=f"the output could not be structurally parsed: {structure.error}",
+            coverage=coverage,
         )
     if structure.unaccounted:
         return Verification(
@@ -466,6 +751,7 @@ def verify(
                 f"{len(structure.unaccounted)} region(s) of the output are not "
                 "accounted for by the format's structure and may carry anything"
             ),
+            coverage=coverage,
         )
 
     if not after_readable:
@@ -478,6 +764,7 @@ def verify(
             checked_values=len(needles),
             detail="no residual values found, but the file could not be re-read "
                    "to confirm its metadata carriers are gone",
+            coverage=coverage,
         )
 
     if remaining:
@@ -490,10 +777,12 @@ def verify(
             remaining_tags=remaining,
             checked_values=len(needles),
             detail="no original values survived; remaining tags are engine-generated",
+            coverage=coverage,
         )
 
     return Verification(
         verdict=Verdict.VERIFIED_CLEAN,
         checked_values=len(needles),
         detail="no metadata carriers and no residual values",
+        coverage=coverage,
     )

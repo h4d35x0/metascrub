@@ -49,7 +49,16 @@ structural decision below exists to make that impossible rather than unlikely:
   - `coverage()` answers at RUNTIME which of the tool's own extensions this
     check has an opinion about, so the gap can be printed rather than recalled.
 
-NOT WIRED IN, ON PURPOSE
+WIRED IN as of 2026-09-07. verify.py calls scan() and reports the result
+through Verification.coverage, which is additive to the JSON report: no
+existing key changed name, type or meaning. The check does NOT change any
+verdict. A GPS carrier found in an output is reported in
+coverage.gps_findings and printed in red by the CLI, and whether that
+should fail a run is a separate, breaking decision that has not been made.
+
+The reason this module does not share a parser with the engines it checks
+still stands and still matters: a checker sharing a parser with the remover
+it checks cannot catch a parser bug.
 
 `verify.py` does not import this module and must not until the wiring is
 reviewed on its own. Phase 1 set that precedent for the PNG engine, and
