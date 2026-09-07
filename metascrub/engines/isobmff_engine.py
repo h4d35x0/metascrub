@@ -126,9 +126,13 @@ WHAT THIS ENGINE DOES NOT REACH, STATED RATHER THAN IMPLIED
     guessing at the prefix length of every sample entry class, so this engine
     reaches the two fixed VisualSampleEntry fields named above and nothing
     past them.
-  - The video bitstream. An H.264 or HEVC SEI user-data NAL inside `mdat` is
-    untouched. That is Phase 3's, and it is why no honest verdict for this
-    format can be better than PARTIAL until it is done.
+  - Any video bitstream that is not H.264 or H.265. The SEI user-data NAL
+    those two write is removed, in `mdat` AND in the `avcC`/`hvcC`
+    configuration record; see PHASE 3, PART ONE below. AV1 and VP9 carry the
+    same class of value in structures this engine does not parse, and a video
+    track whose sample entry holds neither `avcC` nor `hvcC` is left alone.
+  - The bitstream of a HEIF or AVIF still-image ITEM, as opposed to a track.
+    Same gap, stated separately because it is reached by a different route.
   - `mdhd` language. Left as it is: a language code is a weak signal and
     rewriting it changes track selection semantics.
   - Item table tidiness. A zeroed Exif item stays DECLARED in `iinf`, pointing
@@ -207,14 +211,29 @@ SAMPLE_ENTRY_COMPRESSORNAME = (42, 32)
 
 
 class _Edit:
-    """One length-preserving change, recorded before anything is written."""
+    """
+    One length-preserving change, recorded before anything is written.
 
-    __slots__ = ("offset", "length", "note")
+    `replacement` is None for the common case, which zero-fills. Phase 3 needs
+    two edits that are NOT zeros: an SEI NAL rewritten to filler (zeros there
+    would be an emulation prevention violation, see isobmff.sei_filler_bytes)
+    and a tkhd flags word with three bits cleared and the rest kept. Both must
+    still be exactly `length` bytes, which is asserted at write time rather
+    than trusted.
 
-    def __init__(self, offset: int, length: int, note: str) -> None:
+    `note` may be empty, which applies the edit and reports nothing. Zeroing a
+    PCM audio track means zeroing tens of thousands of samples, and a report
+    line per sample is a report nobody reads.
+    """
+
+    __slots__ = ("offset", "length", "note", "replacement")
+
+    def __init__(self, offset: int, length: int, note: str,
+                 replacement: Optional[bytes] = None) -> None:
         self.offset = offset
         self.length = length
         self.note = note
+        self.replacement = replacement
 
 
 def _ranges(boxes: Sequence[Box]) -> List[Tuple[int, int]]:
@@ -374,13 +393,370 @@ def _zero_heif_items(data: bytes, boxes: Sequence[Box], metas: Sequence[Box],
                         % (item_id, field_offset)))
 
 
-def scrub_bytes(data: bytes) -> Tuple[bytes, List[str]]:
+# ===========================================================================
+# PHASE 3, PART ONE: THE ENCODER SIGNATURE IN THE VIDEO BITSTREAM
+# ===========================================================================
+#
+# x264 and x265 sign their work. Both write an SEI user_data_unregistered NAL
+# holding the encoder version and the FULL settings string: every rate control
+# parameter, every tool that was enabled, the build date, the compiler. It is a
+# fingerprint of the software AND of how it was invoked, and on a phone it
+# names the phone's encoder.
+#
+# MEASURED 2026-09-06 on this machine, and the two measurements disagree with
+# each other in a way that matters:
+#
+#   ffmpeg + libx264 -> mp4    the SEI NAL is in `mdat`, 686 bytes, the first
+#                              NAL of the first video sample, carrying
+#                              'x264 - core 164 r3198 ... - options: ...'
+#   ffmpeg + libx265 -> mp4    the SEI NAL is NOT in mdat at all. It is in the
+#                              `hvcC` configuration record inside the `hvc1`
+#                              sample entry, 2334 bytes, carrying
+#                              'x265 (build 215) - 4.1+54-fa2770934: ...'
+#                              The same file muxed with `-tag:v hev1` puts it
+#                              in exactly the same place.
+#
+# So an implementation that scans only mdat removes it from H.264 and misses it
+# completely in H.265, and an implementation that scans only the configuration
+# record does the reverse. Both are scanned. This is CLAUDE.md trap 8 again:
+# behaviour keyed on where a thing "obviously" lives, where the two codecs put
+# it in different places.
+#
+# HOW IT IS REMOVED WITHOUT RE-ENCODING AND WITHOUT MOVING A BYTE
+#
+# Deleting the NAL is not available. Its bytes are inside a sample whose size
+# is in `stsz` and whose chunk offset is in `stco`, so removing them changes a
+# sample size and every offset after it. Measured by the Phase 2 team: moving a
+# pre-mdat box without fixing offsets produced "Invalid NAL unit size" on
+# essentially every frame and ffmpeg exit 69.
+#
+# So the NAL is overwritten IN PLACE at identical length with SEI
+# filler_payload messages, which is payload type 3 in both H.264 and H.265
+# Annex D and whose payload is defined as a run of 0xFF. The NAL header is
+# kept, so an SEI NAL stays an SEI NAL and its position in the access unit
+# stays legal; only its contents change. `isobmff.sei_filler_bytes` builds the
+# replacement and carries the proof that it can never need an emulation
+# prevention byte.
+#
+# WHAT THIS COSTS, STATED RATHER THAN HIDDEN
+#
+# The rewrite replaces EVERY message in an SEI NAL that carries a user-data
+# message, not only the user-data one. That is a deliberate trade and the
+# reason is boundary safety: rewriting one message in the middle of a NAL means
+# writing bytes whose escaping context is set by the bytes on either side of
+# them, and a 0x03 written immediately after two zero bytes silently becomes an
+# emulation prevention byte and shifts everything after it. Rewriting from the
+# first byte after the NAL header to the end of the NAL has no such neighbour:
+# the byte before it is the NAL header and the byte after it is the end of the
+# NAL, and escaping never spans a NAL boundary in either form.
+#
+# The consequence is that a pic_timing or buffering_period SEI sharing a NAL
+# with the encoder signature becomes filler too. That cannot change decoded
+# pixels, and the acceptance test is a full decode with a framemd5 comparison
+# against the input, so the claim is measured rather than argued.
+#
+# WHAT IS NOT REACHED
+#
+#   - Codecs that are not H.264 or H.265. AV1 and VP9 have no SEI; their
+#     equivalents are OBU metadata and are not implemented. A video track whose
+#     sample entry holds neither `avcC` nor `hvcC` is left alone, and this is a
+#     gap rather than a claim.
+#   - HEIF and AVIF still-image ITEMS. A `hvc1` item is an HEVC bitstream and
+#     can in principle carry the same SEI, but its configuration lives in
+#     `ipco` rather than in a sample entry and its data is located by `iloc`
+#     rather than by a sample table. Measured on the HEIC fixture available
+#     here: it carries no x265 or x264 signature at all, so there is nothing to
+#     test against, and an untested path is not shipped.
+#   - `stz2`, the compact sample size table. `isobmff` refuses it rather than
+#     guessing at a field width, so a file using one is refused whole.
+
+_CONFIG_IS_HEVC = {isobmff.AVCC: False, isobmff.HVCC: True}
+
+# The SEI payload of a user_data_unregistered message opens with a 16-byte
+# UUID; the human-readable part is what follows it.
+SEI_UUID_LEN = 16
+
+
+def _video_configs(data: bytes, track: "isobmff.Track"
+                   ) -> List[Tuple[Box, bool, int, List[Tuple[int, int]]]]:
+    """
+    [(config box, is HEVC, NAL length size, NALs the record itself stores)].
+
+    Reached through the sample entries of one track, and only for entries long
+    enough to be a VisualSampleEntry. The NAL length size is READ from the
+    record: 1, 2 and 4 are all legal, and assuming 4 reads a sample as garbage
+    from its first byte.
+    """
+    out: List[Tuple[Box, bool, int, List[Tuple[int, int]]]] = []
+    for entry in track.sample_entries:
+        if entry.payload_len < VISUAL_SAMPLE_ENTRY_LEN:
+            continue
+        for child in isobmff.visual_sample_entry_children(data, entry):
+            hevc = _CONFIG_IS_HEVC.get(child.type)
+            if hevc is None:
+                continue
+            if hevc:
+                length_size, nals = isobmff.hevc_config(data, child)
+            else:
+                length_size, nals = isobmff.avc_config(data, child)
+            out.append((child, hevc, length_size, nals))
+    return out
+
+
+def _user_data_preview(data: bytes, offset: int, length: int,
+                       header: int) -> str:
+    """The printable tail of an SEI user-data payload, for the report line."""
+    rbsp = isobmff.unescape_rbsp(data, offset + header, offset + length)
+    for payload_type, size, at in isobmff.sei_messages(rbsp):
+        if payload_type != isobmff.SEI_USER_DATA_UNREGISTERED:
+            continue
+        body = rbsp[at + SEI_UUID_LEN:at + size]
+        text = "".join(chr(b) for b in body if 32 <= b < 127)
+        return text.strip()[:60]
+    return ""
+
+
+def _sei_edits(data: bytes, tracks: Sequence["isobmff.Track"],
+               removed_ranges: Sequence[Tuple[int, int]],
+               edits: List[_Edit]) -> None:
+    """Rewrite every SEI NAL that carries an encoder signature, in place."""
+    for track in tracks:
+        if track.handler != VISUAL_HANDLER:
+            continue
+        configs = _video_configs(data, track)
+        if not configs:
+            continue
+        shapes = {(hevc, length_size) for _box, hevc, length_size, _n in configs}
+        if len(shapes) > 1:
+            raise EngineError(
+                "video track %d has sample entries whose configuration records "
+                "disagree about the codec or the NAL length field size %r; "
+                "this engine will not guess which one a given sample follows"
+                % (track.track_id, sorted(shapes)))
+        hevc, length_size = shapes.pop()
+
+        found: List[Tuple[int, int, int, str]] = []
+
+        # 1. The NAL units the configuration record itself stores. This is
+        #    where x265 puts its signature, and it is inside `moov`.
+        for box, box_hevc, _size, nals in configs:
+            if _inside(box.offset, removed_ranges):
+                continue
+            for offset, length, header in isobmff.sei_user_data_nals(
+                    data, nals, box_hevc):
+                found.append((offset, length, header,
+                              "the %s configuration record at offset %d"
+                              % (box.name, box.offset)))
+
+        # 2. The NAL units in the track's samples, located through stsz, stsc
+        #    and stco/co64, or through trun for a fragmented file. NOT by
+        #    walking mdat: an interleaved audio frame read as a NAL length
+        #    lands wherever it says.
+        for sample_offset, sample_size in track.samples:
+            if sample_size == 0:
+                continue
+            nals = isobmff.length_prefixed_nals(
+                data, sample_offset, sample_offset + sample_size, length_size)
+            for offset, length, header in isobmff.sei_user_data_nals(
+                    data, nals, hevc):
+                found.append((offset, length, header,
+                              "the sample at offset %d" % sample_offset))
+
+        for offset, length, header, where in found:
+            preview = _user_data_preview(data, offset, length, header)
+            try:
+                filler = isobmff.sei_filler_bytes(length - header)
+            except IsobmffError as exc:
+                raise EngineError(
+                    "an SEI NAL at offset %d could not be replaced with filler "
+                    "of the same length: %s" % (offset, exc)) from exc
+            edits.append(_Edit(
+                offset + header, length - header,
+                "an SEI user-data NAL carrying %s (%d bytes at offset %d, in "
+                "%s), overwritten with SEI filler"
+                % ("'%s'" % preview if preview else "an encoder signature",
+                   length, offset, where),
+                replacement=filler))
+
+
+# ===========================================================================
+# PHASE 3, PART TWO: AUDIO TRACK REMOVAL, OPT IN AND OFF BY DEFAULT
+# ===========================================================================
+#
+# WHY. docs/ANDROID-MEDIA-BUILD.md 1.2: "Traffic noise, accents, a television
+# in the background, and mains hum. Electrical Network Frequency analysis can
+# place and time a recording from the power grid signature in the audio track
+# alone."
+#
+# WHAT THIS DOES, EXACTLY, AND WHAT IT DOES NOT
+#
+# The track is NOT deleted, and it cannot be. Deleting a `trak` moves every box
+# after it, and deleting its samples from `mdat` moves every sample offset in
+# the file. This engine's one invariant is that no length ever changes. So:
+#
+#   1. Every byte of every audio sample in `mdat` is overwritten with zero.
+#      This is the part that actually does the privacy work: the recording is
+#      gone from the file, not merely unreferenced, so carving `mdat` recovers
+#      nothing and there is no ENF signature left to analyse.
+#   2. The sample SIZES in the track's `stsz` are set to zero, so a decoder is
+#      never handed a zero-filled frame to fail on.
+#   3. The `track_enabled`, `track_in_movie` and `track_in_preview` flags in
+#      the track's `tkhd` are cleared, so a player that honours them does not
+#      select the track at all.
+#
+# The track STILL EXISTS STRUCTURALLY. `trak`, `tkhd`, `mdia`, `stsd` and the
+# `mp4a` sample entry are all still there, and exiftool still reports
+# AudioFormat, AudioChannels, AudioBitsPerSample and AudioSampleRate. A viewer
+# can still see that the file HAD an audio track, how many channels it had and
+# at what rate it was sampled. What they cannot get is one sample of it. If
+# hiding the fact that audio was ever present is the requirement, this feature
+# does not meet it and compaction is the only thing that would.
+#
+# MEASURED 2026-09-06, and step 2 is not optional. Four combinations were
+# tried on the same MP4 (H.264 plus AAC) and the same QuickTime .mov:
+#
+#   zero the samples only                 ffmpeg exit 69, 'channel element
+#                                         0.0 is not allocated' on every frame
+#   zero the samples, clear tkhd flags    ffmpeg exit 69, identical errors.
+#                                         ffmpeg does not honour the flag.
+#   zero the samples, zero stco's count   exit 0 but 'stream 1, missing
+#                                         mandatory atoms, broken header'
+#   zero the samples, zero the stsz sizes exit 0, no error on either container,
+#                                         the video framemd5 bit identical and
+#                                         the audio decoding to nothing at all
+#                                         (md5 d41d8cd9..., the empty digest)
+#
+# A PCM track measured separately, because its `stsz` uses the FIXED form and
+# has no per-sample table to zero: sample_size and sample_count are both set to
+# zero instead, which keeps the box self-consistent at 12 payload bytes.
+# ffmpeg reconstructs PCM sample counts from the chunk sizes rather than from
+# stsz, so that track still decodes; it decodes to
+# md5 e9ded829730eccd2d0273d7cc06be58c, which is byte for byte the digest of
+# one second of `anullsrc` silence. Zeroed PCM is silence, which is the correct
+# outcome and is stated because it differs from the AAC case.
+#
+# WHAT IS NOT REACHED
+#
+#   - Fragmented files. `stsz` holds nothing there and the sizes live in each
+#     `trun`. The samples are still zeroed, because `isobmff.tracks` resolves
+#     fragment samples too, but nothing neutralises the sizes, so a decoder
+#     would be handed zero-filled frames. Rather than ship that, a fragmented
+#     file with an audio track REFUSES when audio removal is asked for.
+#   - Timed metadata and subtitle tracks. Only handler 'soun' is touched.
+
+
+AUDIO_HANDLER = b"soun"
+AUDIO_DISABLED_FLAGS = (isobmff.TRACK_ENABLED | isobmff.TRACK_IN_MOVIE
+                        | isobmff.TRACK_IN_PREVIEW)
+
+
+def _merge_ranges(ranges: Sequence[Tuple[int, int]]) -> List[Tuple[int, int]]:
+    """Sorted, coalesced (offset, length) runs, so 44100 PCM samples are one."""
+    ordered = sorted(ranges)
+    out: List[Tuple[int, int]] = []
+    for offset, length in ordered:
+        if length <= 0:
+            continue
+        if out and offset <= out[-1][0] + out[-1][1]:
+            start, span = out[-1]
+            out[-1] = (start, max(span, offset + length - start))
+            continue
+        out.append((offset, length))
+    return out
+
+
+def _audio_edits(data: bytes, boxes: Sequence[Box],
+                 tracks: Sequence["isobmff.Track"],
+                 edits: List[_Edit]) -> None:
+    """Zero every audio sample and neutralise the tracks that held them."""
+    fragmented = bool(isobmff.find_all(list(boxes), b"moof"))
+    for track in tracks:
+        if track.handler != AUDIO_HANDLER:
+            continue
+        if fragmented:
+            raise EngineError(
+                "track %d is an audio track in a fragmented file. Its sample "
+                "sizes live in each trun rather than in stsz, and zeroing the "
+                "samples without neutralising the sizes hands a decoder "
+                "zero-filled frames. This engine will not half-remove an "
+                "audio track" % track.track_id)
+
+        # Counted over the runs that will ACTUALLY be written, not over every
+        # run the track has. A note that says 8991 bytes when 8991 bytes were
+        # already zero is a fabricated number, and the rule about those is that
+        # they are never one error.
+        pending = [(offset, length) for offset, length
+                   in _merge_ranges(track.samples)
+                   if any(data[offset:offset + length])]
+        total = sum(length for _offset, length in pending)
+        for position, (offset, length) in enumerate(pending):
+            edits.append(_Edit(
+                offset, length,
+                "the audio samples of track %d, %d bytes over %d run(s) in "
+                "mdat, zeroed" % (track.track_id, total, len(pending))
+                if position == 0 else "",
+            ))
+
+        stbl = isobmff.stbl_of(track)
+        stsz = None
+        if stbl is not None:
+            for child in stbl.children:
+                if child.type == b"stsz":
+                    stsz = child
+                    break
+        if stsz is None or stsz.payload_len < 12:
+            raise EngineError(
+                "audio track %d has no readable stsz, so its sample sizes "
+                "cannot be neutralised and a decoder would be handed "
+                "zero-filled frames" % track.track_id)
+        fixed = struct.unpack_from(">I", data, stsz.payload_offset + 4)[0]
+        count = struct.unpack_from(">I", data, stsz.payload_offset + 8)[0]
+        if fixed:
+            # The fixed form has no per-sample table. sample_size and
+            # sample_count both go to zero, which leaves a self-consistent box
+            # declaring no samples and an empty table, at the same 12 bytes.
+            span = (stsz.payload_offset + 4, 8)
+        else:
+            if stsz.payload_len < 12 + 4 * count:
+                raise EngineError(
+                    "the stsz of audio track %d declares %d samples but holds "
+                    "only %d payload bytes; zeroing the table it claims to "
+                    "have would write past the box"
+                    % (track.track_id, count, stsz.payload_len))
+            span = (stsz.payload_offset + 12, 4 * count)
+        if span[1] and any(data[span[0]:span[0] + span[1]]):
+            edits.append(_Edit(
+                span[0], span[1],
+                "the stsz sample sizes of audio track %d at offset %d, zeroed "
+                "so no decoder is handed a zero-filled frame"
+                % (track.track_id, stsz.offset)))
+
+        tkhd = isobmff.tkhd_of(track)
+        if tkhd is None:
+            raise EngineError(
+                "audio track %d has no tkhd to disable" % track.track_id)
+        offset, width = isobmff.tkhd_flags_field(tkhd)
+        flags = int.from_bytes(data[offset:offset + width], "big")
+        if flags & AUDIO_DISABLED_FLAGS:
+            edits.append(_Edit(
+                offset, width,
+                "the track_enabled, track_in_movie and track_in_preview flags "
+                "of audio track %d" % track.track_id,
+                replacement=(flags & ~AUDIO_DISABLED_FLAGS).to_bytes(width, "big")))
+
+
+def scrub_bytes(data: bytes, remove_audio: bool = False) -> Tuple[bytes, List[str]]:
     """
     The whole removal, as a pure function over bytes.
 
     Split out from strip_all so the decision logic can be measured without a
     filesystem, and so a caller on a phone can use it directly. The output is
     always exactly as long as the input.
+
+    `remove_audio` is OFF by default and stays off. Dropping the audio is a
+    change to what the file IS rather than to what it says about itself, and a
+    tool that silently returns a silent video is a tool nobody can trust with a
+    recording. See PHASE 3, PART TWO for what it does and does not achieve.
     """
     try:
         boxes = isobmff.parse(data)
@@ -454,6 +830,14 @@ def scrub_bytes(data: bytes) -> Tuple[bytes, List[str]]:
                        text.strip(b"\x00").decode("utf-8", "replace")[:40],
                        entry.name, entry.offset)))
 
+        # The video bitstream, and the audio track if it was asked for. Both
+        # need the sample tables, so both go through isobmff.tracks, and an
+        # unresolvable sample table raises rather than quietly finding nothing.
+        track_list = isobmff.tracks(data, boxes)
+        _sei_edits(data, track_list, removed_ranges, edits)
+        if remove_audio:
+            _audio_edits(data, boxes, track_list, edits)
+
         # hdlr names.
         for box in isobmff.iter_boxes(boxes):
             if box.type != b"hdlr" or _inside(box.offset, removed_ranges):
@@ -471,8 +855,17 @@ def scrub_bytes(data: bytes) -> Tuple[bytes, List[str]]:
                    .decode("utf-8", "replace"), start)))
 
         for edit in edits:
-            out[edit.offset:edit.offset + edit.length] = b"\x00" * edit.length
-            targeted.append(edit.note)
+            fill = edit.replacement
+            if fill is None:
+                fill = b"\x00" * edit.length
+            if len(fill) != edit.length:
+                raise EngineError(
+                    "an edit at offset %d would write %d bytes over %d; this "
+                    "engine never changes a length"
+                    % (edit.offset, len(fill), edit.length))
+            out[edit.offset:edit.offset + edit.length] = fill
+            if edit.note:
+                targeted.append(edit.note)
 
         # Times last, so a time inside a box that was removed is never reported
         # as a separate edit.
@@ -499,7 +892,7 @@ def scrub_bytes(data: bytes) -> Tuple[bytes, List[str]]:
 
     rebuilt = bytes(out)
     try:
-        _assert_clean(data, rebuilt)
+        _assert_clean(data, rebuilt, remove_audio)
     except IsobmffError as exc:
         # The post-condition check reads the output back, so anything it finds
         # unreadable has to leave by the same door every other refusal does.
@@ -511,7 +904,8 @@ def scrub_bytes(data: bytes) -> Tuple[bytes, List[str]]:
     return rebuilt, targeted
 
 
-def _assert_clean(original: bytes, rebuilt: bytes) -> None:
+def _assert_clean(original: bytes, rebuilt: bytes,
+                  remove_audio: bool = False) -> None:
     """
     Post-conditions, checked before anything reaches the filesystem.
 
@@ -554,10 +948,55 @@ def _assert_clean(original: bytes, rebuilt: bytes) -> None:
                         "a time field at offset %d in the %s box is not zero"
                         % (offset, box.name))
 
+    # The bitstream post-conditions. Same circularity caveat as everything
+    # above: this re-reads the output with the walker that wrote it, so it buys
+    # fail-closed behaviour and not evidence. The evidence is a full decode and
+    # a byte search in tests/test_isobmff_engine.py.
+    tracks = isobmff.tracks(rebuilt, boxes)
+    for track in tracks:
+        if track.handler == VISUAL_HANDLER:
+            for _box, hevc, length_size, nals in _video_configs(rebuilt, track):
+                if isobmff.sei_user_data_nals(rebuilt, nals, hevc):
+                    raise EngineError(
+                        "an SEI user-data NAL survived in a configuration "
+                        "record of track %d" % track.track_id)
+                for offset, size in track.samples:
+                    if size == 0:
+                        continue
+                    survivors = isobmff.sei_user_data_nals(
+                        rebuilt,
+                        isobmff.length_prefixed_nals(
+                            rebuilt, offset, offset + size, length_size),
+                        hevc)
+                    if survivors:
+                        raise EngineError(
+                            "an SEI user-data NAL survived in the sample at "
+                            "offset %d" % offset)
+        if remove_audio and track.handler == AUDIO_HANDLER:
+            for offset, size in track.samples:
+                if size and any(rebuilt[offset:offset + size]):
+                    raise EngineError(
+                        "audio sample data at offset %d survived the removal"
+                        % offset)
+
 
 class IsobmffEngine(BaseEngine):
+    """
+    The pure-Python ISO base media engine.
+
+    `remove_audio` is a constructor argument rather than a strip_all argument
+    because `BaseEngine.strip_all` takes a path and nothing else, and widening
+    that interface would touch every other engine in the tree for the benefit
+    of one. The registry in `metascrub/engines/__init__.py` builds this with no
+    arguments, so the shipped instance has audio removal OFF, which is the
+    documented default and the only behaviour any current caller gets.
+    """
+
     name = "isobmff"
     supports_selective = False
+
+    def __init__(self, remove_audio: bool = False) -> None:
+        self.remove_audio = remove_audio
 
     def available(self) -> Tuple[bool, str]:
         return True, ""
@@ -573,7 +1012,7 @@ class IsobmffEngine(BaseEngine):
         # Everything that can refuse the file refuses it here, before a
         # temporary file exists. A refusal must leave the directory exactly as
         # it found it.
-        rebuilt, targeted = scrub_bytes(data)
+        rebuilt, targeted = scrub_bytes(data, self.remove_audio)
 
         tmp = temp_beside(path, ".isobmff")
         try:
