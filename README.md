@@ -260,9 +260,32 @@ python -m metascrub selftest                   # prove the whole chain works her
 python -m metascrub gui                        # desktop window
 ```
 
-Useful flags: `--no-backup`, `--reset-times` (also normalise filesystem
-timestamps), `--remove-field TAG` / `--sanitize-field TAG` (exiftool formats
-only).
+Useful flags: `--no-backup`, `--reset-times`, `--neutral-names`,
+`--remove-field TAG` / `--sanitize-field TAG` (exiftool formats only).
+
+**`--reset-times`** normalises the filesystem timestamps to the epoch. On
+Windows that now includes the **creation time**, which it did not before: a file
+could otherwise sit on disk with a modification time saying 1970 while its
+creation time still named the minute it was captured, and the unnormalised one
+is the one an examiner reads. On macOS and Linux the creation time is not
+settable, and the report says so rather than staying silent about it.
+
+Note the interaction with backups. `<file>.backup` is a faithful copy of the
+original and keeps the original timestamps, which is correct but means the
+capture time still sits in the directory. Use `--no-backup` if you are sharing a
+whole folder.
+
+**`--neutral-names`** renames each scrubbed file to `fileNNNN.ext`. Some
+identifiers are not inside the file at all:
+`Screenshot_2026-09-06-14-30-22_instagram.png` carries a timestamp to the second
+and names the app, and `PXL_20260906_143022891.jpg` names the device family. No
+byte scan of the file can ever find those. metascrub reports a filename that
+looks like it leaks whether or not you pass this flag; the flag is what fixes it.
+
+It is off by default deliberately: this tool edits your files in place, and
+silently renaming someone's files is a worse surprise than the leak it prevents.
+A file that failed verification is never renamed, because it is still leaking
+and hiding that is the last thing to do. An existing file is never overwritten.
 
 Exit status is non-zero if any file failed **or** if any file still holds
 metadata after sanitizing, so it drops into a pipeline without parsing the

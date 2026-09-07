@@ -192,11 +192,33 @@ and recoverable while a custom profile is neither.
 **Everything after `EOI` is removed.** This is the motion photo trailer.
 
 Google Motion Photos and Samsung Motion Photos append a complete MP4 after
-the JPEG end-of-image marker. That MP4 carries its own GPS location atom.
-The file still opens correctly in every viewer, and the photo ships with its
-location intact inside a video nobody looked at. The XMP in `APP1` carries a
-`GContainer` directory pointing at the offset, so removing `APP1` without
-removing the trailer also leaves an orphaned payload.
+the JPEG end-of-image marker. The file still opens correctly in every viewer,
+and the photo ships with a video of the moment nobody looked at.
+
+**Corrected 2026-09-06 against real device files.** This paragraph used to say
+"That MP4 carries its own GPS location atom." That claim is UNCONFIRMED. Three
+genuine motion photos were obtained and measured, and none of them contains the
+bytes `a9 78 79 7a` anywhere in the file:
+
+| Real file | Convention it uses |
+|---|---|
+| `test.MP.jpg`, Pixel 3a | `ns.google.com/photos/1.0/container` plus `GCamera:MotionPhoto` |
+| `MVIMG_20180910_124410.jpg` | `MicroVideoOffset`, an OLDER convention with NO GContainer |
+| `Samsung SM-G950F` | `SEFH` trailer, discovered backward from the file's end |
+
+The trap is undiminished: an entire video of the moment you took the photo
+rides along invisibly, and that is sensitive whether or not it also carries a
+coordinate. But the GPS specifically was an assumption, and it should not be
+repeated until a real sample shows it.
+
+**Google has at least TWO incompatible conventions, and an implementation
+written against one will not find the other.** The `GContainer` directory and
+the older `MicroVideoOffset` field are different mechanisms; a walker looking
+for `GContainer` reports `MVIMG_20180910_124410.jpg` as having no trailer at
+all. This is why the removal rule is "zero bytes after the first top-level
+EOI" and not "find the trailer and remove it": the structural rule is
+convention-agnostic and covers all three of the above, including whatever
+Google does next.
 
 **Two corrections, measured 2026-09-06 against synthetic Google-style and
 Samsung-style fixtures.**
@@ -671,7 +693,7 @@ at all or needs its own table with its own gate.
 |---|---|
 | HEIC/HEIF/AVIF item-level removal | a HEIC fixture with Exif and XMP items round-trips, opens in the Android decoder, and shows zero tags to the exiftool oracle |
 | True ISO base media compaction with `stco`/`co64` fixup | a compacted MP4 fixture plays correctly and its sample table offsets resolve |
-| SEI user-data NAL removal | an x264-encoded fixture loses its version string with no re-encode and still decodes |
+| ~~SEI user-data NAL removal~~ **DISCHARGED 2026-09-07** | Condition met and exceeded. Measured: the x264 signature is a 686-byte SEI NAL in `mdat`, and the x265 signature is a 2334-byte SEI NAL in the `hvcC` configuration record inside `moov` with **no copy in `mdat` at all**, so a scanner that walks only `mdat` silently misses every H.265 file. Both are now overwritten in place with conformant SEI `filler_payload` messages, length unchanged, `framemd5` bit-identical across h264, h265, `+faststart`, fragmented, 3GP, `.mov` and h264+AAC. |
 | WebM / Matroska | a phone in the fleet actually produces one |
 | PRNU and quantization mitigation | `Assurance.MITIGATED` exists and the GUI renders it distinctly in text |
 

@@ -508,3 +508,39 @@ characters.
 **Pattern:** use raw strings or `chr(92)` for Windows paths, and verify written
 files by byte scan rather than by reading them back on screen. The corruption is
 invisible in a terminal.
+
+---
+
+## 2026-09-06 - Keeping a structure by name is an exclusion too
+
+CLAUDE.md trap 11 says an exclusion added to `_STRUCTURAL_TAGS` needs its
+overcorrection test in the same commit, because a name on that list is a name
+never searched again. The JPEG engine showed the same hazard pointing the other
+way, and the trap as written does not cover it.
+
+The keep-list said "keep DNL". Implemented as "keep whatever arrives under
+marker 0xDC", that is a 60 KB hiding place inside a segment nothing inspects
+again. DNL's real payload is two bytes. The same held for EXP (one byte), DHP
+(`6 + 3*Nf`) and DAC (whole 2-byte entries): all four are fixed or computable by
+T.81, and all four were being kept at whatever length arrived on disk. Keying
+the rule on the marker NUMBER alone would have created five carriers in the act
+of protecting five structures that had none.
+
+The fix was to enforce the shape the specification fixes, and to refuse anything
+that does not match. `DQT`, `DHT`, `SOF` and `DRI` are deliberately not bounded
+yet and that gap is named in the code rather than left implicit.
+
+**Pattern:** an entry on a keep-list is an assertion that the structure cannot
+carry a payload, and it needs the same evidence as an entry on a remove-list.
+Ask what the maximum payload of the thing you are keeping actually is. If the
+answer is "whatever the length field says", it is a carrier, not a structure.
+
+Corollary measured the same day: `ORACLE_ALLOW_PNG_KEEPLIST` documents itself as
+holding only fields that "cannot carry identity at all", and `cHRM`'s eight
+chromaticity fields do not fully clear that bar. They are 32 bytes of
+fixed-point an attacker can write anything into. They cannot hold a string or a
+wall-clock time, and a wrong value visibly changes rendering, which is a weaker
+guarantee than the seven IHDR fields have. The qualification was recorded rather
+than the claim being asserted. `pHYs` sits on the same list while
+`png_engine.py` documents `PixelsPerUnitX 5669` as a producer signature on its
+own; the structural chunk inventory covers that gap, the allowlist does not.
