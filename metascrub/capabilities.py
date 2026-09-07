@@ -42,6 +42,7 @@ class Engine(str, Enum):
     JPEG = "jpeg"           # APPn/COM marker surgery, plus the post-EOI trailer
     PNG = "png"             # ancillary chunk whitelist
     WEBP = "webp"           # RIFF chunk whitelist; drop VP8X where possible
+    ISOBMFF = "isobmff"     # ISO base media box surgery: mp4/mov/heic/avif/3gp
 
 
 class Completeness(str, Enum):

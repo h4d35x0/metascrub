@@ -8,6 +8,7 @@ from ..capabilities import Engine
 from .av_engine import AvEngine
 from .base import BaseEngine, EngineError, EngineUnavailable
 from .exiftool_engine import ExifToolEngine
+from .isobmff_engine import IsobmffEngine
 from .jpeg_engine import JpegEngine
 from .odf_engine import OdfEngine
 from .png_engine import PngEngine
@@ -25,11 +26,15 @@ _REGISTRY: Dict[Engine, BaseEngine] = {
     Engine.OLE2: Ole2Engine(),
     Engine.AV: AvEngine(),
     Engine.SVG: SvgEngine(),
-    # Phase 1 stubs. available() reports False so `doctor` is honest
-    # about them; no CAPABILITIES row routes here yet.
+    # Phase 1 and 2 engines for the mobile build. Implemented and reporting
+    # ready, but NO CAPABILITIES row routes to any of them: the desktop rows
+    # still use exiftool and ffmpeg. `doctor` lists them as ready because they
+    # are; `selftest` gates only on engines reachable from CAPABILITIES, so an
+    # unwired engine cannot fail a working installation.
     Engine.JPEG: JpegEngine(),
     Engine.PNG: PngEngine(),
     Engine.WEBP: WebpEngine(),
+    Engine.ISOBMFF: IsobmffEngine(),
 }
 
 
