@@ -85,7 +85,11 @@ ROUTED_EXTENSIONS = (".heic", ".heif", ".avif")
 
 DEVICE_MEDIA_DIRS = (
     os.environ.get("METASCRUB_DEVICE_MEDIA", ""),
-    r"<device-corpus>",
+    # The device corpus is real phone media and lives OUTSIDE this repository:
+    # it is never committed, and its path is a fleet path that must not be
+    # published. Point METASCRUB_DEVICE_CORPUS at it to run these checks;
+    # without it they skip, and the synthetic fixtures still run everywhere.
+    os.environ.get("METASCRUB_DEVICE_CORPUS", ""),
 )
 
 # The three Apple files. Each carries the Apple Display P3 ICC profile in

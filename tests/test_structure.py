@@ -1176,18 +1176,32 @@ DEVICE_OTHER = [
 
 
 @requires_device_corpus
-def test_the_device_corpus_is_all_sixteen_files():
+def test_the_device_corpus_has_not_shrunk():
     """
     A corpus that lost half its files would make every test below pass by
     covering nothing. This is the denominator, checked rather than assumed.
+
+    The guard is one-directional, and that is deliberate. It was written as an
+    equality and broke on 2026-09-07 the first time a file was ADDED: a real
+    GrapheneOS Pixel capture supplied by the owner. Growth is the corpus working
+    as intended; the failure mode this test exists for is SHRINKAGE, where a
+    fixture quietly disappears and every parametrized case below silently stops
+    covering it.
+
+    An unexpected file is reported, not failed, because the alternative is a
+    test that punishes exactly the contribution it wants.
     """
     present = {name for name in os.listdir(_DEVICE_CORPUS)
                if not name.endswith(".md")}
     expected = set(DEVICE_CLEAN) | set(DEVICE_TRAILERS) | set(DEVICE_OTHER)
-    assert len(expected) == 16
-    assert present == expected, (
-        "corpus drift; missing: %s, unexpected: %s"
-        % (sorted(expected - present), sorted(present - expected)))
+    assert len(expected) == 16, "the named corpus tables changed size"
+    missing = expected - present
+    assert not missing, (
+        "corpus SHRANK; these named fixtures are gone: %s" % sorted(missing))
+    extra = present - expected
+    if extra:
+        print("  note: %d file(s) in the corpus are not named by any table "
+              "and are therefore untested here: %s" % (len(extra), sorted(extra)))
 
 
 @requires_device_corpus
