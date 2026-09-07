@@ -583,3 +583,46 @@ navigation mode on the emulator, took down system_server. `activity` and
 `package` services disappeared and the AVD needed a reboot. Change a system
 setting with `settings put` where one exists, and do not reconfigure a machine
 that is running someone else's work.
+
+## A warning that asserts an outcome instead of computing it becomes false
+
+Date: 2026-09-07
+
+A fleet script printed, for every repo it could not classify, "these WILL refuse
+to commit once `user.useConfigOnly` is on." That was reasoning, not measurement,
+and it was wrong for three of the seven repos it said it about. Three broad
+`includeIf` entries were being deleted, but several NARROWER ones survived and
+kept supplying an identity to everything beneath them, so three of the flagged
+repos would have carried on working exactly as before.
+
+A user acting on that warning would have hand-assigned identities to three repos
+that did not need them, and would have trusted the same warning about the four
+that did.
+
+The fix was to compute it: read the surviving `includeIf` prefixes out of the
+live `~/.gitconfig`, and test each repo path against them, so every entry is
+labelled `[still covered]` or `[WILL REFUSE]` from evidence. The rule
+generalises past this script: when output tells the user what WILL happen, that
+is a prediction, and a prediction that is one `case` statement away from being a
+measurement should be the measurement.
+
+## The biggest bucket in a fleet sweep is rarely the one your sample suggested
+
+Date: 2026-09-07
+
+An early estimate said "183 repos, 10 declare identity locally, 173 inherit",
+and the plan built on it was to assign identity to the 173. The real sweep found
+282 `.git` directories, 34 declaring locally, and, decisively, that the largest
+group of identity-less repos was 106 per-project memory stores written by a
+SessionStart hook whose commit output goes to `/dev/null`.
+
+Had `useConfigOnly` been armed against that estimate, memory autocommit would
+have died fleet-wide and silently. It turned out to be safe, but only because
+the hook happens to pass `-c user.name -c user.email` as well as exporting
+`GIT_AUTHOR_*`, and that was confirmed in a throwaway repo rather than assumed
+from reading the source.
+
+Two habits, both cheap: print the method next to the number so the count can be
+re-derived, and characterise the biggest bucket before designing around it. The
+category that dominates a fleet sweep is usually the automated one nobody thinks
+of as a repository.
