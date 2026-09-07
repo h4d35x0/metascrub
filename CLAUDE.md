@@ -143,7 +143,7 @@ it never counts as verified. See the decision block in `verify.py` and
 | `metascrub/engines/` (mobile) | jpeg, png, webp, isobmff. Pure Python, no exiftool and no ffmpeg, because neither runs on a phone. Only isobmff is WIRED: `.heic/.heif/.avif` route to it because exiftool cannot remove a HEIF ICC profile at all. |
 | `metascrub/isobmff.py` | the ISO base media box walker the isobmff engine parses with |
 | `metascrub/gps_verify.py` | structural GPS check; the byte scan can never see a coordinate, because EXIF stores rationals. NOT wired into verify.py yet |
-| `android/` | Chaquopy app with a share-target activity; verified scrubbing on a device |
+| `android/` | Chaquopy app. Two ways in: an in-app picker (ACTION_OPEN_DOCUMENT, multi-select) and a share target (SEND and SEND_MULTIPLE). Saves through ACTION_CREATE_DOCUMENT or a folder grant. No permissions declared, deliberately. JPEG, batch and MP4 verified on a real device |
 | `metascrub/gui.py` | Tkinter window; a view over MetadataScrubber, never a fork |
 | `metascrub/theme.py` | Windows 95 palette and its contrast floor |
 | `metascrub/selftest.py` | end-to-end proof for a new machine |

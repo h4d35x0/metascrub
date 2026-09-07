@@ -57,6 +57,43 @@ Versions follow [semantic versioning](https://semver.org/). The PyPI package is
 
 ### Added
 
+- **The Android app can now pick files and save where you choose.** Until now the
+  only working entry point was the share sheet: the launcher icon opened a screen
+  that said "share a photo to this app" and offered no way to do anything, and the
+  cleaned copy could only be handed to another app rather than saved.
+
+  There are now two ways in. Open the app and choose photos or videos, with
+  multi-select, or share to it from a gallery. `ACTION_SEND_MULTIPLE` is declared
+  alongside `ACTION_SEND`, because an app that declares only the latter disappears
+  from the share sheet the moment you select a second photo. Output goes through
+  `ACTION_CREATE_DOCUMENT` for one file or a folder grant for a batch.
+
+  **Still no permissions, and that is the point.** Both pickers return a per-file
+  grant the user chose, so the app cannot enumerate a gallery it was never given.
+  Asking for `READ_MEDIA_IMAGES` to read one file the user already pointed at
+  would be the wrong trade for this tool. Confirmed against the running build: the
+  OS reports no media or storage permission requested.
+
+  Output names are generated rather than copied. A camera filename like
+  `PXL_20260906_214918493.jpg` carries the capture time to the second, which is an
+  identifier in its own right. A single save suggests a neutral name you can edit;
+  a batch uses neutral names throughout, and the screen says so.
+
+  Verified on a Pixel 9 Pro XL running Android 17, by planting a sentinel in the
+  input and searching the SAVED bytes for it afterwards. A JPEG went 18108 ->
+  17730 bytes with `APP1 'Exif'` removed and the sentinel gone, 17730 being
+  exactly its size before that EXIF was written. Three JPEGs at once all came out
+  clean with their originals byte-identical. An MP4 went through the pure-Python
+  ISO BMFF engine at 16349 -> 16349 bytes, length preserved, losing its `udta`
+  box, `compressorname`, `hdlr` name and an x264 SEI user-data NAL, and still
+  decoded as h264 640x480 30 frames with no errors. Full commands and output in
+  `docs/ANDROID-BUILD-NOTES.md`.
+
+  The app is debug builds only. There is no signing config in the tree, it is not
+  published anywhere, and WebP and HEIC have not been pushed through it on a
+  device.
+
+
 - **The report now states what it did NOT check.** A `.pdf` used to print
   `SANITIZED` and nothing else, and a reader could reasonably take silence for
   completeness. It now prints `NOT FULLY CHECKED: ... GPS carriers: NOT CHECKED

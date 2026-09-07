@@ -655,7 +655,13 @@ and AVIF come after, because of the `meta` box distinction in 2.4.
 timestamp control, optional audio track drop, SEI user-data NAL removal.
 
 **Phase 4. The Android app.** Chaquopy shell, and a share-target activity
-so the flow is gallery, Share, metascrub, on to the destination app. Write
+so the flow is gallery, Share, metascrub, on to the destination app.
+
+> Shipped 2026-09-07, and then outgrew this paragraph the same day. A share
+> target alone leaves the launcher icon a dead end, so the app also has an
+> in-app picker with multi-select and saves through a destination the user
+> chooses. This paragraph is left as written because it is the plan that was
+> made; `docs/ANDROID-BUILD-NOTES.md` is what the app actually does. Write
 a new scrubbed file rather than editing the original in MediaStore: it
 sidesteps the write-consent dialog and honours "never destroy the original"
 for free, which also means the `<path>.backup` policy is simply not needed

@@ -397,6 +397,42 @@ Double-click any row for the full result JSON.
 
 ---
 
+## On Android
+
+There is an Android app in `android/`. It is the reason the pure-Python engines
+exist: neither exiftool nor ffmpeg can run on a phone, so `jpeg`, `png`, `webp`
+and `isobmff` do the work there with nothing but the standard library.
+
+Two ways in. Open the app and choose photos or videos, with multi-select, or
+share to it from your gallery. It cleans them, then asks where to save. The
+originals are never modified: incoming files are only ever opened for reading.
+
+**It declares no permissions at all.** The system file picker hands the app a
+grant for exactly the files you chose, so it cannot enumerate your gallery, and
+there is no `INTERNET` permission either, so nothing it reads can leave the
+device. Asking for `READ_MEDIA_IMAGES` in order to read one file you already
+pointed at would be the wrong trade for a tool like this.
+
+Output names are generated rather than copied. `PXL_20260906_214918493.jpg`
+carries the capture time to the second, so a single save suggests a neutral name
+you can edit and a batch uses neutral names throughout.
+
+**What the app does not claim.** The desktop tool proves a scrub by reading the
+metadata values before the write and searching the output bytes for those exact
+strings afterwards. That baseline read is an exiftool read, and exiftool cannot
+run on Android. So the app reports what the engine targeted and what the
+structural scan found, says plainly when a container has no structural walker,
+and never prints the word "verified".
+
+**Honest status.** Debug builds only. There is no signing config in the tree, it
+is not on any store, and there is no release. What has been driven end to end on
+a real device is JPEG single, JPEG batch, and MP4; WebP and HEIC have not been.
+Build it yourself with `./gradlew assembleDebug` in `android/`.
+`docs/ANDROID-BUILD-NOTES.md` has the full verification chain, with the commands
+and their real output.
+
+---
+
 ## Checking an installation
 
 `doctor` answers "can the engines start". `selftest` answers the larger

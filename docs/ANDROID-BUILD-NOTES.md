@@ -12,6 +12,15 @@ MediaStore."
 **Status: built, installed, driven, and verified. A real file was scrubbed on
 device and the removal was proved from the desktop against the pulled bytes.**
 
+**The app has since outgrown that description, 2026-09-07.** A share target
+alone made the launcher icon a dead end: it opened a screen that said "share a
+photo to this app" and offered no way to do anything. There are now two entry
+points, an in-app picker using `ACTION_OPEN_DOCUMENT` with multi-select and the
+share target handling both `ACTION_SEND` and `ACTION_SEND_MULTIPLE`, and the
+cleaned copy is saved where the user chooses rather than only handed to another
+app. Still no permissions: the pickers grant per-file access. See "In-app picker
+and save" below for the measurements.
+
 ---
 
 ## Answers to the four questions, up front
