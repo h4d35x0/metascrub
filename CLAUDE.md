@@ -194,8 +194,14 @@ file used to name does not exist on this machine at all.
   containers were called deferred in three documents while `DEFERRED` was `{}`,
   which made three gates iterate nothing and pass having asserted nothing. The
   gates are now functions over a table, exercised against synthetic tables, so
-  an empty `DEFERRED` no longer disables them. `DEFERRED` is empty again as of
-  2026-09-04, and that is now a measured state rather than a silent one.
+  an empty `DEFERRED` no longer disables them.
+
+  **`DEFERRED` currently holds FOUR entries: `.fodt`, `.fods`, `.fodp` and
+  `.svgz`,** each with a discharge condition, as README's coverage section says.
+  This file claimed it was "empty again as of 2026-09-04" until 2026-09-07, when
+  the claim was checked by importing the table instead of reading the sentence.
+  Which is the entire lesson above, committed against this very file: a statement
+  about a deferral is worth exactly nothing unless something executes it.
 - **Never overwrite an existing `<file>.backup`.** It is the only remaining copy
   of the pre-sanitize original.
 - **The GUI is a view over `MetadataScrubber`, never a second implementation.**
