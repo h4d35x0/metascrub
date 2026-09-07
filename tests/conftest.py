@@ -960,6 +960,98 @@ def make_aiff(tmp_path, ext: str = ".aiff"):
     return path, value
 
 
+# ISO BASE MEDIA STILL IMAGES
+#
+# Added 2026-09-07, when the coverage gate was strengthened. Until that day
+# .heic, .heif and .avif claimed coverage through a `_COVERED_BY` proxy naming
+# .jpg, and that claim went false the moment the family was routed from
+# Engine.EXIFTOOL to Engine.ISOBMFF: the proxy named a code path the three
+# extensions no longer take. The gate did not notice, because it only asked
+# whether the proxy had a fixture. Two of the three now have their own.
+#
+# WHY THE .avif FIXTURE IS SYNTHETIC AND WHY THAT IS STILL HONEST
+#
+# It is honest about a bounded claim, and the bound is the whole argument.
+# What the ALL_KINDS tests assert is orchestration and removal: the sentinel
+# the fixture put in is gone from the output bytes, the tool's own verdict
+# agrees with an independent byte search, a COMPLETE row really does verify
+# clean, an unreadable baseline is refused, and a second pass is safe. Every
+# one of those is a claim about THIS FILE and the code path it takes. A
+# Pillow-or-ffmpeg AVIF is a genuine ISO base media file, exiftool genuinely
+# writes an EXIF item and an XMP item into it, and isobmff_engine genuinely
+# performs box surgery on it. Nothing in that chain is stubbed, so nothing in
+# that chain is being taken on trust.
+#
+# What it cannot prove is anything about a carrier only a real device writes:
+# the Apple ICC profile in iprp/ipco/colr that forced the routing change, the
+# Samsung `sefd` box, maker notes, depth maps, gain maps. Those are proven in
+# tests/test_heic_routing.py against the real-device corpus, which lives
+# outside the repository and is not copied into it, so those tests skip on
+# every machine that does not have it. That division is deliberate: the
+# always-runnable fixture must never be mistaken for the device corpus, and
+# the device corpus must never be a precondition for the suite to pass.
+#
+# The .heic kind is the other half of the trade. It uses the real heic/mif1
+# container named by MOBILE_HEIC_SOURCES, which is a real container and NOT
+# device output (measured; see the note above that constant), and it skips
+# when the file is absent. So on a bare machine the family still has the
+# synthetic AVIF running end to end, and on a machine with the container the
+# real box tree is exercised too.
+
+
+def make_avif(tmp_path):
+    """
+    SYNTHETIC. A small AV1 still in an ISO base media container, stamped with
+    an EXIF sentinel and an XMP sentinel by exiftool.
+
+    Built by Pillow where it can write AVIF and by ffmpeg otherwise, which is
+    the same two-encoder fallback tests/test_heic_routing.py uses. Skips when
+    neither can, following make_ole2's rule: a machine without an encoder says
+    nothing about whether the engine works, and a failure here would claim it
+    did.
+
+    The returned sentinel is the EXIF one, which is the one that MUST be gone.
+    """
+    path = str(tmp_path / "fixture.avif")
+    try:
+        from PIL import Image
+
+        Image.new("RGB", (48, 48), (10, 90, 150)).save(path, format="AVIF")
+    except Exception:
+        if not HAVE_FFMPEG:
+            pytest.skip("no AVIF encoder: Pillow cannot write AVIF and ffmpeg "
+                        "is absent")
+        proc = subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi",
+             "-i", "color=c=red:s=64x64:d=1", "-frames:v", "1", "-f", "avif",
+             path], capture_output=True)
+        if proc.returncode != 0 or not os.path.isfile(path):
+            pytest.skip("this ffmpeg build cannot write AVIF")
+
+    value = sentinel("avif")
+    xmp_value = sentinel("avifxmp")
+    _exiftool_write(
+        path,
+        Make="Acme",
+        Model="Testcam",
+        Software=value,
+        Artist=value,
+        Copyright=value,
+        DateTimeOriginal="2026:03:14 09:26:53",
+        GPSLatitude="37.4220",
+        GPSLatitudeRef="N",
+        GPSLongitude="-122.0841",
+        GPSLongitudeRef="W",
+        **{"XMP-dc:Description": xmp_value},
+    )
+    # Asserted, not assumed, for the same reason make_ole2 asserts: a fixture
+    # that failed to store its sentinel would let every removal test pass by
+    # having nothing to remove.
+    assert raw_contains(path, value), ".avif fixture did not store the EXIF sentinel"
+    assert raw_contains(path, xmp_value), ".avif fixture did not store the XMP sentinel"
+    return path, value
+
+
 # LEGACY OLE2
 #
 # Cached for the whole session and copied per test. Every other builder here is
@@ -1028,13 +1120,22 @@ def make_ole2(tmp_path, ext: str):
 # sentinel() is a pure function of its tag: a test that wants the XMP sentinel
 # of the JPEG fixture asks for sentinel("mobilejpgxmp").
 #
-# NOT ADDED TO ALL_KINDS, deliberately. ALL_KINDS is the parametrize source for
-# test_removal, test_failopen, test_unparseable and test_crossproduct, and it is
-# keyed on EXTENSION: .jpg, .png, .webp and .mp4 are already in there through
-# make_image and make_video. Adding a second builder for the same extension
-# would either collide with those rows or need a non-extension key, which
-# capabilities.deferral_for() and the coverage gate both assume cannot happen.
-# These live in their own registry until Phase 1 owns the extensions outright.
+# FOUR OF THESE FIVE ARE NOT IN ALL_KINDS, deliberately. ALL_KINDS is the
+# parametrize source for test_removal, test_failopen, test_unparseable and
+# test_crossproduct, and it is keyed on EXTENSION: .jpg, .png, .webp and .mp4
+# are already in there through make_image and make_video. Adding a second
+# builder for the same extension would either collide with those rows or need a
+# non-extension key, which capabilities.deferral_for() and the coverage gate
+# both assume cannot happen. Those four live in their own registry until
+# Phase 1 owns the extensions outright.
+#
+# .heic IS THE EXCEPTION, since 2026-09-07. The stated reason for the exclusion
+# is an extension COLLISION, and .heic collides with nothing: no other builder
+# in this file claims it. It was excluded only by being swept in with the other
+# four. build() now dispatches .heic to make_mobile_heic and ALL_KINDS lists it,
+# so the ISO base media routing is exercised end to end on a real container
+# wherever one is present. build_mobile(".heic") still returns the same fixture;
+# the two entry points share one builder rather than forking it.
 
 # The one real file available on this machine. Not device output, and the
 # difference matters, so it is measured here rather than repeated:
@@ -1374,11 +1475,18 @@ def make_mobile_heic(tmp_path):
     opposite and deliberately so: exiftool absence breaks the measurement
     itself, a missing sample file only narrows what can be measured.
 
-    MEASURED 2026-09-06, and it is why there is no ORACLE_ALLOW_HEIC: running
-    the CURRENT engine over this fixture returns status 'error', because the ICC
-    profile survives `exiftool -all=` on HEIC and verify.py finds
-    'Adobe RGB (1998)' and 'Copyright 2000 Adobe Systems Incorporated' in the
-    output bytes. HEIC is Phase 2's.
+    MEASURED 2026-09-06, when .heic still routed to Engine.EXIFTOOL: running the
+    engine over this fixture returned status 'error', because the ICC profile
+    survives `exiftool -all=` on HEIC and verify.py found 'Adobe RGB (1998)' and
+    'Copyright 2000 Adobe Systems Incorporated' in the output bytes. That is why
+    there was no ORACLE_ALLOW_HEIC.
+
+    RE-MEASURED 2026-09-07, after the family was routed to Engine.ISOBMFF: the
+    same fixture comes back status 'sanitized', verdict 'verified_clean', both
+    sentinels gone from the output bytes and the file length unchanged at 99898
+    bytes. The paragraph above is kept because the mechanism is the lesson, but
+    it no longer describes what this fixture does today, and that change is what
+    makes .heic usable as an ALL_KINDS kind.
 
     Two sentinels: EXIF and XMP. The returned one is the EXIF one.
     """
@@ -1500,6 +1608,12 @@ def build(kind: str, tmp_path):
         if not HAVE_FFMPEG:
             pytest.skip("ffmpeg not available")
         return make_aiff(tmp_path, kind)
+    if kind == ".heic":
+        # Shared with build_mobile(".heic"). One builder, two entry points; see
+        # the note above MOBILE_HEIC_SOURCES for why forking it would be worse.
+        return make_mobile_heic(tmp_path)
+    if kind == ".avif":
+        return make_avif(tmp_path)
     raise AssertionError(f"no fixture builder for {kind}")
 
 
@@ -1520,6 +1634,17 @@ ALL_KINDS = [ext for ext, _ in IMAGE_FORMATS] + [
     # rather than a declared proxy, because the thing under test IS the per
     # extension map entry, and a wrong entry is exactly what a proxy hides.
     ".qt", ".mqv", ".lrv", ".f4a",
+    # Added 2026-09-07. The ISO base media still-image family. It had NO fixture
+    # of any kind and claimed coverage through a proxy naming .jpg, which went
+    # false the day the family was routed to Engine.ISOBMFF and which the gate
+    # did not notice. Both codec branches of the family are here: .heic is HEVC
+    # in a real heic/mif1 container and skips where that container is absent,
+    # .avif is AV1 and is built from nothing on any machine with an encoder, so
+    # the family is never left entirely untested. .heif keeps a proxy, and it
+    # now has to name a same-engine sibling to be accepted. See the section
+    # headed ISO BASE MEDIA STILL IMAGES for what the synthetic one does and
+    # does not prove.
+    ".heic", ".avif",
 ]
 
 
