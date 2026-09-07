@@ -3,9 +3,21 @@
 
     <!--
         No permissions are declared, and that is a design statement rather than
-        an omission. The app reads exactly one file, through the URI grant that
-        arrives with the share intent, and writes only inside its own storage.
-        It has no INTERNET permission, so nothing it reads can leave the device.
+        an omission. Every file this app touches arrives as a URI grant the user
+        chose: from the share intent, or from ACTION_OPEN_DOCUMENT when they pick
+        files here. Output goes through ACTION_CREATE_DOCUMENT or a folder grant
+        from ACTION_OPEN_DOCUMENT_TREE. None of that needs a permission.
+
+        Adding READ_MEDIA_IMAGES would let the app enumerate the whole gallery in
+        order to read the one file the user already pointed at. For a tool whose
+        purpose is not leaking things, that is the wrong trade, and it would put
+        a permission prompt in front of a first run that does not need one.
+
+        There is no INTERNET permission either, so nothing it reads can leave the
+        device.
+
+        Verified against a running build 2026-09-07: the OS reports no media or
+        storage permission requested by this package.
     -->
 
     <application
@@ -33,10 +45,24 @@
             </intent-filter>
 
             <!--
-                A launcher entry as well, showing what actually loaded on this
-                device rather than a file picker. It is the on-device answer to
-                "which engines are really running", which is otherwise a claim
-                nobody can check from the phone.
+                SEND_MULTIPLE is a separate action, not a variant of SEND, and an
+                app that declares only SEND simply does not appear in the share
+                sheet once you select a second photo. Added 2026-09-07 alongside
+                in-app multi-select, because offering batches in one entry point
+                and not the other is a difference nobody would predict.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="video/*" />
+            </intent-filter>
+
+            <!--
+                The launcher entry is a real entry point, not a diagnostics
+                screen. Until 2026-09-07 it said "share a photo to this app" and
+                offered no way to do anything, which is a dead end: the icon is
+                the first thing anyone taps. It now opens the system file picker.
             -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
