@@ -766,10 +766,87 @@ it would matter if a future caller ever passed a user file directly.
 
 ---
 
+## In-app picker and save: driven end to end on device, 2026-09-07
+
+Everything below was driven over adb on a Pixel 9 Pro XL, Android 17 (SDK 37),
+three-button navigation, against the build whose installed APK hashes equal to
+the local `app-debug.apk`. Each step was read back from `uiautomator dump`
+rather than assumed, and every output was verified by searching the SAVED bytes
+for a sentinel planted before the file was pushed.
+
+### Single JPEG, pick -> clean -> save
+
+Input built with a sentinel in Artist, Copyright, Model and ImageDescription
+plus GPS, then pushed and scanned into MediaStore.
+
+    picked via ACTION_OPEN_DOCUMENT   "1 file selected: metascrub-devicetest.jpg"
+    cleaned                            18108 -> 17730 bytes
+                                       removed: APP1 'Exif', 378 bytes
+                                       structural scan: every byte accounted for
+    saved via ACTION_CREATE_DOCUMENT   suggested name metascrub-01.jpg, editable
+
+    sentinel in the saved bytes        0   (4 in the input)
+    exiftool on the saved copy         JFIFVersion, ResolutionUnit, X/YResolution
+                                       and nothing else
+    original on the device afterwards  byte-identical, same sha256
+
+17730 is exactly the size of that JPEG before the EXIF was written into it.
+
+### Three JPEGs, multi-select -> batch clean -> folder save
+
+    picked                             "3 selected" in the system picker,
+                                       app showed "3 files selected"
+    cleaned                            9649->9293, 8729->8373, 9817->9461
+                                       each removed one APP1 'Exif', 356 bytes
+    saved via OPEN_DOCUMENT_TREE       metascrub-01.jpg .. metascrub-03.jpg
+
+    sentinels in the saved bytes       0, 0, 0   (4 each in the inputs)
+    identifying tags per exiftool      0, 0, 0
+    originals afterwards               all three byte-identical
+    cross-contamination check          output 1 contains neither sentinel 2 nor 3
+
+The SEND button was correctly absent for a batch: a chooser takes one stream.
+
+### MP4, the in-place ISO BMFF path
+
+This is the interesting one, because ffmpeg cannot run here and the device
+diagnostics report it absent. The pure-Python isobmff engine did the work.
+
+    cleaned                            16349 -> 16349 bytes, LENGTH PRESERVED
+    removed                            udta box at 16100 (249 bytes)
+                                       compressorname in the avc1 sample entry
+                                       hdlr name 'VideoHandler'
+                                       an x264 SEI user-data NAL, 687 bytes,
+                                       overwritten with SEI filler
+    structural scan                    every byte accounted for
+
+    sentinel in the saved bytes        0   (3 in the input)
+    'x264 - core' banner remaining     0
+    Lavf/Lavc encoder strings          0
+    'VideoHandler' remaining           0
+    exiftool on the saved copy         HandlerType 'Video Track' and
+                                       CompressorID 'avc1', both structural
+    still decodable                    h264 640x480, 30 frames, 2.000s,
+                                       `ffmpeg -f null -` reports no errors
+    original afterwards                byte-identical
+
+Length preservation is the point of the in-place design: `stco`/`co64` sample
+offsets never move, so the file stays valid without a remux.
+
+### What this does NOT cover
+
+WebP and HEIC were still not pushed through the app. The engines report ready in
+the device diagnostics, but no claim is made beyond that.
+
 ## Open work on the Android side
 
-- The `content://media/...` grant path from a real gallery is unverified. See
-  "What did not work" item 1.
+- The `content://media/...` grant path from a real gallery share is still
+  unverified from a HARNESS: `am start --grant-read-uri-permission` cannot
+  delegate a MediaStore grant it does not own, and the exact failure is
+  `SecurityException: ... has no access to content://media/external/images/media/N`,
+  measured 2026-09-07. The in-app picker path IS verified end to end, and a
+  human sharing from the gallery has confirmed the app works, so what remains
+  unverified is the automated harness route, not the feature.
 - Audio removal is off, matching the desktop default. Section 1.2 argues it
   should be a prominent toggle, which is UI work this shell does not have. The
   honest state today is the documented default, not a silently different one.
@@ -777,8 +854,6 @@ it would matter if a future caller ever passed a user file directly.
   share. It is app-private and removed on uninstall, and it is what makes the
   adb verification chain possible without root, but a shipping build should offer
   to delete it once the hand-off completes.
-- Only `ACTION_SEND` is handled. `ACTION_SEND_MULTIPLE` is not, so sharing two
-  photos at once will not offer metascrub.
 - Only debug builds have been produced. There is no signing config anywhere in
   the tree, by design.
 - WebP was not exercised end to end on device. The engine reports `ready` in the
