@@ -382,7 +382,21 @@ def test_an_svg_with_nothing_to_remove_is_left_byte_identical(tmp_path):
         assert fh.read() == original, "a file with no metadata was rewritten anyway"
     assert result["status"] != STATUS_ERROR, result.get("error")
     assert result["removed_fields"] == []
-    assert result["verification"]["verdict"] == "verified_clean"
+
+    # CHANGED 2026-09-07 with the zero-needle decision, and this fixture is
+    # exactly the case that decision is about. Measured with exiftool 13.29
+    # through this project's own read flags, the four tags above are
+    # SVG:Xmlns (excluded as the namespace declaration by _STRUCTURAL_VALUES),
+    # SVG:ImageWidth, SVG:ImageHeight and SVG:ViewBox "0 0 10 10" (all
+    # numeric). So `meaningful_values()` returns the empty set, the residual
+    # scan searches this output for nothing, and the old "verified_clean"
+    # was a pass over an empty measurement.
+    #
+    # Nothing about the file changed and nothing about the removal changed;
+    # the tool stopped claiming it had proven something it had not.
+    assert result["verification"]["verdict"] == "no_baseline_values"
+    assert result["verification"]["checked_values"] == 0
+    assert result["verification"]["clean"] is False
 
 
 def test_a_malformed_svg_is_refused_rather_than_reported_clean(tmp_path):

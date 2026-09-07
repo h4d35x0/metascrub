@@ -14,7 +14,7 @@ proves it, by searching the output bytes for the exact values the file used to
 carry. It never asks the tool that just wrote the file whether the tool did its
 job.
 
-Seven engines, 71 extensions, 951 tests.
+8 engines wired to 71 extensions, 11 engines built, 1541 tests.
 
 ## "I only post to social media, who cares"
 
@@ -103,6 +103,40 @@ of what any tool reports.
 
 The runtime verdict is bounded by what exiftool can read, and `verified_clean`
 should be read as exactly that claim and no wider.
+
+### When there is nothing to search for
+
+Sometimes that bound leaves the scan with nothing at all to look for. exiftool
+reports coordinates as numbers, and a purely numeric string cannot be a search
+value because it collides with ordinary binary content, so a photo whose only
+metadata is a GPS fix produces a baseline full of tags and an empty set of
+strings to search the output for.
+
+The scan then searches for nothing and finds nothing. Until 2026-09-07 that
+printed the same word as a scan of fifteen values, on real files: measured on
+`Nokia 6.1.mp4`, a geotagged Android video, `verified_clean` with
+`checked_values: 0`.
+
+It now reports its own verdict, **`no_baseline_values`**, and `clean` is
+`false`:
+
+```
+  SANITIZED  Nokia 6.1.mp4  [av]
+      NOT PROVEN CLEAN: the baseline read produced no searchable value, so the
+      residual scan searched this output for 0 value(s). Nothing was found in it
+      and nothing was proven about it.
+```
+
+Read it as exactly that. The file was scrubbed, nothing was found in it, and
+nothing about it was proven by the residual scan. It is deliberately not an
+error: the removal happened, the status stays `sanitized`, and the exit code
+does not change. It is deliberately not `unverified` either, which means a
+check could not run at all, where this is a check that ran and had nothing to
+measure. Other checks may still have run on the same file, and the
+`NOT FULLY CHECKED` line says which ones did not.
+
+**This is a breaking change for anyone matching on `verdict` or `clean`.** See
+CHANGELOG.md.
 
 ---
 
@@ -348,7 +382,8 @@ What the window will not do:
   examined is worse than no GUI, because the reassurance is what the user takes
   away.
 - **It will not leave a verification cell blank.** Every file reads either
-  `verified clean`, `clean (partial format)`, `STILL LEAKING (n)`, or
+  `verified clean`, `clean (partial format)`, `STILL LEAKING (n)`,
+  `UNEXPLAINED DATA (n)`, `not proven (0 values)`, `carriers remain`, or
   `not verified`. A blank cell reads as "fine", and DEFERRED and SKIPPED files
   are not fine, they are unexamined.
 - **It will not let a leak pass quietly.** A still-leaking file raises a dialog

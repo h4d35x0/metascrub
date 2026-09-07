@@ -53,6 +53,41 @@ STATUS_UNSUPPORTED = "unsupported"  # format not handled
 STATUS_DEFERRED = "deferred"        # format knowingly not handled yet
 STATUS_ERROR = "error"
 
+# Verdicts that must NOT downgrade a COMPLETE format to STATUS_ERROR.
+#
+# The downgrade below exists because a COMPLETE format that did not verify
+# clean has broken this tool's central promise. That is a claim about the FILE,
+# and only a verdict that is itself a claim about the file may trigger it.
+#
+# NO_BASELINE_VALUES is not one. It says the baseline read produced no value
+# the residual scan could search for, so the scan ran over an empty set. The
+# file was genuinely cleaned; nothing was found in it; nothing was measured
+# either. Decided 2026-09-07, with both directions priced:
+#
+#   Making it an error would write "verification failed" into the result of a
+#   file whose verification did not fail, would fail the exit code on every
+#   GPS-only photo and on `Nokia 6.1.mp4` (measured: real, geotagged,
+#   genuinely cleaned, zero needles), and would collapse "we found a problem"
+#   into "we have no evidence" - the same trap 2 conflation that was just
+#   refused one layer down in the verdict vocabulary. The documented risk of
+#   Option D in docs/WHAT-THE-TOOL-CLAIMS.md is exactly this: too loud, then
+#   tuned back down one quiet commit at a time.
+#
+#   Leaving it a success would reintroduce the hole. It does not: `clean` is
+#   False for this verdict, so the file leaves the `verified_clean` count, and
+#   the CLI and GUI both render it in their own words. Nothing anywhere says
+#   "verified clean" about it any more, which was the entire defect.
+#
+# So: the status stays SANITIZED, which is true (metadata was present and was
+# removed), and the verdict carries the limit, which is where the limit
+# belongs. tests/test_zero_needle.py asserts this BOTH ways: a zero-needle
+# COMPLETE file is not an error, and a COMPLETE file with a real survivor
+# still is.
+_VERDICTS_THAT_ARE_NOT_A_FINDING = frozenset({
+    Verdict.VERIFIED_CLEAN,
+    Verdict.NO_BASELINE_VALUES,
+})
+
 _PSEUDO = frozenset({"File", "System", "Composite", "ExifTool", "SourceFile"})
 
 BACKUP_SUFFIX = ".backup"
@@ -659,7 +694,13 @@ class MetadataScrubber:
         # A format declared COMPLETE that did not verify clean is a failure of
         # this tool's central promise, not a warning. Downgrade the status so no
         # caller can read it as success.
-        if spec.completeness is Completeness.COMPLETE and not verification.clean:
+        #
+        # Read against the verdict rather than against `not verification.clean`,
+        # because those two stopped being the same question on 2026-09-07:
+        # NO_BASELINE_VALUES is not clean and is not a failure either. See
+        # _VERDICTS_THAT_ARE_NOT_A_FINDING for why, at length.
+        if (spec.completeness is Completeness.COMPLETE
+                and verification.verdict not in _VERDICTS_THAT_ARE_NOT_A_FINDING):
             result["status"] = STATUS_ERROR
             result["error"] = (
                 "verification failed: "

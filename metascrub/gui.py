@@ -107,6 +107,17 @@ def _verdict_text(result: Dict) -> str:
         return f"UNEXPLAINED DATA ({count})"
     if verdict == "carriers_remain":
         return "carriers remain"
+    if verdict == "no_baseline_values":
+        # The fifth branch, added 2026-09-07 with the zero-needle decision.
+        # Without it this verdict fell through to "not verified", which fails
+        # safe and reads as the wrong thing: "not verified" means the check
+        # could not run, and this check ran and had nothing to measure.
+        #
+        # Trap 6 is the whole reason it is worded this way. The row is still
+        # SANITIZED and still carries the SANITIZED colour, because the file
+        # really was scrubbed, so colour says nothing about this at all and
+        # every bit of the distinction has to be in the cell's text.
+        return "not proven (0 values)"
     return "not verified"
 
 

@@ -1,9 +1,31 @@
 # What the tool claims: five vocabularies, one verdict string
 
-Status: OPEN. Design document, not an implementation. No code changed by this
-document. It exists so one decision can be made: **what should `verified clean`
-be allowed to mean.** That is a decision about the product's central promise,
-so it is the owner's, not the author's.
+Status: DECIDED 2026-09-07, on the one question section 5 left to the owner.
+Everything below is preserved as written, because it is the record of what was
+MEASURED on 2026-09-07 and those measurements did not change. What changed is
+the tool.
+
+**The decision.** `checked_values == 0` is no longer `VERIFIED_CLEAN`. It gets
+a NEW verdict value, `Verdict.NO_BASELINE_VALUES`, and NOT a downgrade to the
+existing `UNVERIFIED`: UNVERIFIED means "verification could not run" and this
+is "verification ran over an empty set", which are different facts. It is not
+an error either, so a COMPLETE format landing there stays `sanitized`; the
+reasoning is written beside the exemption in `scrubber.py`. Breaking for anyone
+matching on `verdict`, and released as such. Section 5's other open question,
+whether `as_dict()` should emit `structure_applicable`, was answered YES by the
+coverage wiring that shipped alongside this document.
+
+So section 2 Case B, section 4 Option D's `checked_values == 0` carve-out, and
+the first of the two questions in section 5 are all CLOSED. Re-measured
+2026-09-07 after the change: `Nokia 6.1.mp4`, the real device file, now reports
+`no_baseline_values` with `checked_values` 0 and status `sanitized`, and a
+rebuilt GPS-only JPEG does the same (`tests/test_zero_needle.py`). The two
+synthetic `.dng` rows were NOT rebuilt or re-measured; they take the same
+branch by construction, which is an expectation here and not a measurement.
+
+Design document, not an implementation. It exists so one decision could be
+made: **what should `verified clean` be allowed to mean.** That is a decision
+about the product's central promise, so it was the owner's, not the author's.
 
 Read in this order: the table in section 1 is the argument, section 2 is the
 damage, sections 4 and 5 are the choice. Everything else is support.

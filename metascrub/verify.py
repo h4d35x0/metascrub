@@ -186,7 +186,13 @@ _MIN_NEEDLE = 8
 
 
 class Verdict(str, Enum):
-    """Outcome of verification. UNVERIFIED is never treated as success."""
+    """
+    Outcome of verification. VERIFIED_CLEAN is the only success.
+
+    UNVERIFIED and NO_BASELINE_VALUES are both refusals to claim success, and
+    they are refusals for different reasons. Neither satisfies
+    `Verification.clean`.
+    """
 
     VERIFIED_CLEAN = "verified_clean"      # read-back empty and no residual bytes
     RESIDUAL_FOUND = "residual_found"      # values survived; the file still leaks
@@ -198,6 +204,26 @@ class Verdict(str, Enum):
     # explains them. Both mean the file is not clean, and the difference is
     # exactly what the operator needs in order to act.
     STRUCTURE_UNACCOUNTED = "structure_unaccounted"
+    # The baseline read produced no value the residual scan could search for,
+    # so the scan ran over an empty set and found nothing. It says NOTHING
+    # about the file: not that it is clean, not that it leaks, not that a check
+    # broke. It says the evidence this module is built on was not available for
+    # this file.
+    #
+    # DISTINCT FROM UNVERIFIED, DELIBERATELY, AND THIS IS THE WHOLE POINT.
+    # UNVERIFIED means verification COULD NOT RUN: the output would not parse,
+    # or it could not be re-read. This is verification that RAN and had nothing
+    # to measure. Those are different facts about different failures, and the
+    # one thing this codebase does not do is let two such facts share a
+    # representation. `MetadataRead` / `ReadOutcome`, `GpsStatus` and
+    # `StructureReport.applicable` all exist for exactly that reason; folding
+    # this into UNVERIFIED would be CLAUDE.md trap 2 in the one function where
+    # it matters most.
+    #
+    # The name says where the emptiness came from and makes no claim about the
+    # file, which is why it is not `NOTHING_TO_CHECK` (reads as "so it is
+    # fine") and not `VERIFICATION_FAILED` (reads as "so it is broken").
+    NO_BASELINE_VALUES = "no_baseline_values"
 
 
 # The checks this build knows how to run, named so that a caller can be told
@@ -213,44 +239,40 @@ ALL_CHECKS = (CHECK_RESIDUAL_SCAN, CHECK_GPS_CARRIERS, CHECK_STRUCTURE_REGIONS)
 
 # ------------------------------------------------------- the zero-needle decision
 #
-# OPEN, ON PURPOSE. THIS IS THE PLACE IT LANDS WHEN IT IS DECIDED.
+# DECIDED 2026-09-07 by the owner. CLOSED. The flag that used to sit here,
+# `ZERO_NEEDLE_DECISION_IS_OPEN`, is GONE rather than set False, so nothing can
+# read it and quietly reopen the question.
 #
-# `checked_values == 0` means the residual scan searched the output bytes for
-# no strings at all and then returned "nothing survived". Measured 2026-09-07
-# and recorded in docs/WHAT-THE-TOOL-CLAIMS.md section 2 Case B: on
-# `Nokia 6.1.mp4`, a real geotagged Android video, the verdict is
-# VERIFIED_CLEAN over an empty needle set, and the same shape reproduces on a
+# THE CASE. `checked_values == 0` means the residual scan searched the output
+# bytes for no strings at all and then returned "nothing survived". Measured
+# 2026-09-07 and recorded in docs/WHAT-THE-TOOL-CLAIMS.md section 2 Case B: on
+# `Nokia 6.1.mp4`, a real geotagged Android video, the verdict was
+# VERIFIED_CLEAN over an empty needle set, and the same shape reproduced on a
 # GPS-only JPEG and a GPS-only DNG. That is the one case where "measured" and
 # "inferred" are provably the same code path, which is the sentence the module
 # docstring above opens by rejecting.
 #
-# Section 5 of that document recommends the case must not be VERIFIED_CLEAN and
-# deliberately does NOT decide whether it becomes a NEW verdict value or a
-# downgrade to the existing UNVERIFIED. Both are breaking changes to the JSON
-# report, so the choice is the owner's and is NOT made here. The behaviour is
-# therefore unchanged by the coverage wiring below: `coverage` REPORTS the
-# number, and nothing reads it back as a verdict.
+# THE DECISION. It gets its own verdict, `Verdict.NO_BASELINE_VALUES`, and NOT
+# a second meaning for UNVERIFIED. UNVERIFIED means "verification could not
+# run"; this is "verification ran over an empty set". Those are different
+# facts, and collapsing them is trap 2 in a new place. See the enum member for
+# the full reasoning and for why the name makes no claim about the file.
 #
-# WHAT CHANGES WHEN THE DECISION LANDS, so the cost is visible before it is
-# paid rather than discovered during it:
-#   1. `verify()` grows one branch, here in this module, on `not needles`.
-#   2. `Verdict` grows a value, or `UNVERIFIED` grows a second meaning. Only
-#      the first is greppable; the second is trap 2 in a new place, because
-#      UNVERIFIED today means "verification could not run" and this is
-#      "verification ran over an empty set".
-#   3. `gui._verdict_text()` needs the new word. It falls back to
-#      "not verified" for an unrecognised verdict, which fails safe but reads
-#      as the wrong thing.
-#   4. `scrubber.py`'s COMPLETE downgrade reads `not verification.clean` and
-#      would start turning genuinely cleaned files into STATUS_ERROR.
-#   5. Every test asserting VERIFIED_CLEAN on a fixture whose baseline yields
-#      no needles. Measured: 2 of the 13 files in the document's table.
-#   6. README.md, CHANGELOG.md (as BREAKING), and the Android app's renderer.
+# WHAT IT IS NOT. It is not an error. `scrubber.py` exempts it from the
+# COMPLETE downgrade, on purpose and with its reasoning written down beside the
+# exemption: the file was genuinely cleaned, nothing was found in it, and
+# calling that "verification failed" would trade one false statement for
+# another. What closes the hole is that the verdict is no longer the word
+# "verified clean", `clean` is False so the file leaves the `verified_clean`
+# count, and the CLI and the GUI both say so in text.
 #
-# `tests/test_coverage_reporting.py::test_the_zero_needle_decision_is_still_open`
-# is the collector: it asserts the flag and the current behaviour together, so
-# flipping the flag without doing 1 to 6 fails loudly instead of silently.
-ZERO_NEEDLE_DECISION_IS_OPEN = True
+# BREAKING, and released as such: any parser matching `verdict ==
+# "verified_clean"` stops matching these files. That visibility is the reason a
+# new value was chosen over a quieter option.
+#
+# tests/test_zero_needle.py is the measurement, and
+# tests/test_coverage_reporting.py::test_the_zero_needle_decision_is_closed
+# refuses to let the flag come back.
 
 
 @dataclass
@@ -650,9 +672,9 @@ def _coverage(path: str, needles: int, report, structure: StructureReport,
     else:
         structure_detail = "structure: every region of the output is accounted for"
 
-    # The residual scan always runs. It can still search for nothing; see
-    # ZERO_NEEDLE_DECISION_IS_OPEN above for why that is reported as a number
-    # here and not as a verdict anywhere.
+    # The residual scan always runs. It can still search for nothing, and since
+    # 2026-09-07 that is a verdict of its own as well as a number here; see the
+    # zero-needle decision above.
     residual_detail = f"residual byte scan: {needles} value(s) searched for"
 
     return Coverage(
@@ -690,6 +712,11 @@ def verify(
     and the two must not produce the same verdict: a caller reading
     VERIFIED_CLEAN off a check that never ran is exactly the inference this
     module exists to replace with measurement.
+
+    An empty needle set is the same failure one step earlier and returns
+    NO_BASELINE_VALUES rather than VERIFIED_CLEAN. "Searched fifteen values and
+    found none of them" and "searched nothing" are not the same measurement,
+    and until 2026-09-07 they printed the same word.
     """
     if only_fields:
         needles = scoped_values(before, only_fields)
@@ -764,6 +791,35 @@ def verify(
             checked_values=len(needles),
             detail="no residual values found, but the file could not be re-read "
                    "to confirm its metadata carriers are gone",
+            coverage=coverage,
+        )
+
+    if not needles:
+        # THE ZERO-NEEDLE BRANCH. Everything above this line is a measurement
+        # that found something: a survivor, an unparseable output, an
+        # unaccounted region, a read-back that could not happen. None of them
+        # fired, and the residual scan that would otherwise carry the verdict
+        # searched for NOTHING, because the baseline read produced no value
+        # worth searching for.
+        #
+        # It is placed here, and not earlier, on purpose: a positive finding is
+        # always the more useful sentence, so a file with zero needles AND an
+        # unaccounted region is still STRUCTURE_UNACCOUNTED. This verdict is
+        # what is left when there is nothing else to say.
+        #
+        # It is placed before the `remaining` branch below for the same reason
+        # it exists at all: engine-generated tags in the output are not
+        # evidence that the ORIGINAL values are gone, and an empty needle set
+        # means nothing ever established that they are.
+        return Verification(
+            verdict=Verdict.NO_BASELINE_VALUES,
+            remaining_tags=remaining,
+            checked_values=0,
+            detail=(
+                "the baseline read produced no searchable value, so the "
+                "residual scan searched the output for nothing; this file is "
+                "neither proven clean nor known to leak"
+            ),
             coverage=coverage,
         )
 

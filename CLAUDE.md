@@ -30,6 +30,16 @@ code or in a test, is a change to the point of the project.
 **Never write a test that asks an engine whether it succeeded.** Every fixture
 embeds a unique sentinel and the assertion searches the bytes for it.
 
+**And a search of NOTHING is not a measurement either.** When a baseline read
+produces no searchable value, the residual scan runs over an empty set and
+finds nothing. Until 2026-09-07 that printed `verified_clean`, measured on a
+real geotagged Android video with 58 baseline tags: the one case where
+"measured" and "inferred" were provably the same code path. It now returns
+`Verdict.NO_BASELINE_VALUES`, which is NOT `UNVERIFIED` ("verification could
+not run") and NOT an error ("we found something"). It is not clean either, so
+it never counts as verified. See the decision block in `verify.py` and
+`tests/test_zero_needle.py`.
+
 ---
 
 ## Traps already paid for. Do not re-learn these.
@@ -147,7 +157,7 @@ embeds a unique sentinel and the assertion searches the bytes for it.
 ## Commands
 
 ```bash
-python -m pytest tests/ -q          # 1521 passed, 5 skipped, dev machine, 2026-09-07
+python -m pytest tests/ -q          # 1541 passed, 5 skipped, dev machine, 2026-09-07
 python -m metascrub selftest        # end-to-end, including a real round trip
 python -m metascrub doctor          # can the engines start
 python -m metascrub gui
@@ -156,9 +166,11 @@ python -m metascrub gui
 The 5 skips are intentional: .doc, .xls, .ppt and .svg are PARTIAL so they skip
 the COMPLETE-formats check, and one test of the missing-LibreOffice path skips
 where LibreOffice is present. Measured on the dev machine 2026-09-07 after the
-coverage wiring: 1521 passed, 5 skipped, 7m36s. This number moves fast right
-now; it was 899, then 986, then 1345. It is an environment fact rather than a
-gate. Compare TOTALS and FAILURES, then read every skip reason with `-rs`.
+zero-needle decision: 1541 passed, 5 skipped, 6m41s, against 1521 passed and
+the same 5 skips measured an hour earlier before it. This number moves fast
+right now; it was 899, then 986, then 1345, then 1521. It is an environment
+fact rather than a gate. Compare TOTALS and FAILURES, then read every skip
+reason with `-rs`.
 
 A pass count is an environment fact, not a gate. Compare TOTALS and FAILURES
 first, then read every skip reason with `-rs`. The same tree measured 291/5 on

@@ -479,47 +479,44 @@ def test_the_gui_carries_the_distinction_as_text():
 
 
 # ===========================================================================
-# THE ZERO-NEEDLE DECISION: OPEN, AND COLLECTED HERE
+# THE ZERO-NEEDLE DECISION: CLOSED
 # ===========================================================================
 
 
-def test_the_zero_needle_decision_is_still_open(tmp_path):
+def test_the_zero_needle_decision_is_closed(tmp_path):
     """
-    THE DEFERRAL COLLECTOR. This test is the thing that must fail when the
-    decision lands, so that the decision cannot land quietly.
+    THE DEFERRAL COLLECTOR, DISCHARGED. This test used to assert that the
+    decision was still open. It now asserts that it is closed and that the flag
+    which recorded it as open is GONE, so the deferral cannot be reopened by
+    accident and cannot linger as a constant nobody reads.
 
-    `checked_values == 0` means the residual scan searched the output for no
-    strings at all and returned "nothing survived". Section 5 of
-    docs/WHAT-THE-TOOL-CLAIMS.md recommends that this must not be
-    VERIFIED_CLEAN, and deliberately does NOT decide between a new verdict
-    value and a downgrade to UNVERIFIED. Both are breaking changes to a
-    documented interface, so the choice is the owner's. Until it is made, the
-    behaviour is unchanged and is asserted here rather than assumed.
-
-    WHEN THE DECISION LANDS: set `verify.ZERO_NEEDLE_DECISION_IS_OPEN` False,
-    and the numbered list beside that constant in verify.py is what has to
-    change with it. This test then fails on its first assertion, before it can
-    mislead anyone about the second.
+    Decided 2026-09-07 by the owner: `checked_values == 0` gets its own verdict,
+    `Verdict.NO_BASELINE_VALUES`, and NOT a second meaning for `UNVERIFIED`.
+    UNVERIFIED means verification could not run; this is verification that ran
+    over an empty set. The full measurement of the new behaviour lives in
+    tests/test_zero_needle.py; what is asserted HERE is only that the deferral
+    is discharged and that the coverage wiring this file owns still reports the
+    same number beside it.
     """
-    assert verify.ZERO_NEEDLE_DECISION_IS_OPEN is True, (
-        "the zero-needle case has been decided. Rewrite this test to assert "
-        "the new behaviour, and work the list beside "
-        "verify.ZERO_NEEDLE_DECISION_IS_OPEN."
+    assert not hasattr(verify, "ZERO_NEEDLE_DECISION_IS_OPEN"), (
+        "the zero-needle deferral flag is back. The decision was made on "
+        "2026-09-07 and the flag was deleted rather than set False, precisely "
+        "so nothing could read it and reopen the question quietly."
     )
 
     path, _sentinel = build(".png", tmp_path)
     scrub(path)
 
     # An empty baseline is the zero-needle case in its purest form: the
-    # residual scan has nothing to look for and passes.
+    # residual scan has nothing to look for, and now says so.
     verification = verify.verify(path, spec_for(path), {}, {})
 
     assert verification.checked_values == 0
-    assert verification.verdict is verify.Verdict.VERIFIED_CLEAN
-    assert verification.clean is True
+    assert verification.verdict is verify.Verdict.NO_BASELINE_VALUES
+    assert verification.clean is False
 
-    # What DID change: the number is now visible next to the verdict instead of
-    # only inside it, and it says so in words.
+    # The coverage statement this file exists to measure is unchanged by the
+    # decision: the number is still reported next to the verdict, in words.
     assert verification.coverage is not None
     assert verification.coverage.checked_values == 0
     assert "0 value(s) searched for" in verification.coverage.detail

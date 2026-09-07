@@ -97,6 +97,22 @@ def _print_result(result: Dict) -> None:
         for region in regions[:5]:
             print(_c(f"        {region[:70]}", RED))
 
+    # The zero-needle case. The line above this one says SANITIZED, which is
+    # true, and this says what the tool did NOT establish about it, in words,
+    # on its own line. Yellow and never red: nothing was found in this file.
+    # Nothing here changes the exit code either, for the same reason.
+    #
+    # Printed even though the coverage block below also mentions the number,
+    # because the coverage block is a list of checks that did not run and this
+    # is the one check that DID run, over nothing. A reader skimming for the
+    # word "clean" has to hit this instead.
+    if verification.get("verdict") == "no_baseline_values":
+        print(_c("      NOT PROVEN CLEAN: the baseline read produced no "
+                 "searchable value, so the", YELLOW))
+        print(_c("      residual scan searched this output for 0 value(s). "
+                 "Nothing was found in it", YELLOW))
+        print(_c("      and nothing was proven about it.", YELLOW))
+
     # What the verdict does not cover.
     #
     # The verdict is one word about the checks that ran. This says which ones

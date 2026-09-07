@@ -14,6 +14,47 @@ Versions follow [semantic versioning](https://semver.org/). The PyPI package is
 
 ## [Unreleased]
 
+### Changed - BREAKING
+
+- **BREAKING: a file whose baseline read produced no searchable value no longer
+  reports `verified_clean`.** It reports a new verdict, `no_baseline_values`,
+  and its `clean` field is `false`.
+
+  **The old behaviour, so you can tell whether it affected you.** The residual
+  scan captures the metadata values a file carried BEFORE it was touched and
+  then searches the output bytes for those exact strings. When a baseline read
+  produces no searchable value, that search runs over an empty set, finds
+  nothing, and used to return `verdict: "verified_clean"`, `clean: true`,
+  `checked_values: 0`. The tool printed the same word after searching zero
+  values that it prints after searching fifteen. Measured 2026-09-07 on
+  `Nokia 6.1.mp4`, a real geotagged Android video: 58 baseline tags, 0 needles,
+  `verified_clean`. It reproduced on a GPS-only JPEG and a GPS-only DNG.
+
+  It happens when everything a file carries is numeric or short: exiftool
+  reports coordinates as numbers under `-n`, and purely numeric strings are not
+  searchable because they collide with ordinary binary content. A photo whose
+  only metadata is a GPS fix is the common case.
+
+  **Who this breaks.** Anyone matching on the report's `verdict` field, or on
+  `clean`. A parser with `if verdict == "verified_clean"` stops matching these
+  files, which is the point: it was previously being told these files were
+  proven, and they were not. `--report FILE` is a documented interface and this
+  is a structural change to it.
+
+  **What did NOT change.** The removal itself. These files are scrubbed exactly
+  as before, their status stays `sanitized`, and the process exit code is
+  unchanged. `no_baseline_values` is deliberately NOT an error: nothing was
+  found in the file, and calling that "verification failed" would trade one
+  false statement for another. It is also deliberately NOT the existing
+  `unverified`, which means "verification could not run"; this is
+  "verification ran and had nothing to measure", and collapsing two different
+  facts into one word is the defect this project keeps a separate vocabulary
+  to avoid.
+
+  The CLI prints `NOT PROVEN CLEAN: ... searched this output for 0 value(s)`
+  under the file, in yellow, and the GUI's Verification cell reads
+  `not proven (0 values)`. Both say it in text, never in colour alone.
+
 ### Added
 
 - **The report now states what it did NOT check.** A `.pdf` used to print
@@ -48,10 +89,10 @@ Versions follow [semantic versioning](https://semver.org/). The PyPI package is
 
 ### Known limits
 
-- A file whose baseline read yields no searchable values still reports
-  `verified_clean` after searching zero strings. The decision on how to grade
-  that case is open and is breaking either way; see
-  `verify.ZERO_NEEDLE_DECISION_IS_OPEN`.
+- A file whose baseline read yields no searchable values is now reported as
+  `no_baseline_values` rather than `verified_clean`, which says the residual
+  scan proved nothing about it. It does not say what such a file carries; the
+  other checks, where they cover the format, are what answer that.
 - A GPS carrier found in an output is reported but does not change the verdict.
 
 ---
